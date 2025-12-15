@@ -746,13 +746,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 let summarized = (item.summarized_content || '').trim();
                 let full = (item.full_content || '').trim();
                 
-                // Remove existing title from summarized if it starts with "# domain llm.txt"
-                const summarizedTitlePattern = new RegExp(`^#\\s*${domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+llm\\.txt\\s*\\n?`, 'i');
-                summarized = summarized.replace(summarizedTitlePattern, '').trim();
+                // Escape domain for regex
+                const escapedDomain = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 
-                // Remove existing title from full if it starts with "# domain llms-full.txt" or "# domain llm-full.txt"
-                const fullTitlePattern = new RegExp(`^#\\s*${domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+llm[s-]?full\\.txt\\s*\\n?`, 'i');
-                full = full.replace(fullTitlePattern, '').trim();
+                // Remove ALL existing title variations from summarized content (anywhere in content, not just start)
+                // Match: "# domain llm.txt", "# domain llms.txt", etc.
+                const summarizedTitlePatterns = [
+                    new RegExp(`#\\s*${escapedDomain}\\s+llm[s]?\\.txt\\s*\\n?`, 'gi'),
+                    new RegExp(`#\\s*${escapedDomain}\\s+llm\\.txt\\s*\\n?`, 'gi'),
+                    new RegExp(`#\\s*${escapedDomain}\\s+llms\\.txt\\s*\\n?`, 'gi')
+                ];
+                summarizedTitlePatterns.forEach(pattern => {
+                    summarized = summarized.replace(pattern, '').trim();
+                });
+                
+                // Remove ALL existing title variations from full content (anywhere in content, not just start)
+                // Match: "# domain llm-full.txt", "# domain llms-full.txt", "# domain llm-full.txt", etc.
+                // Remove ALL occurrences, not just the first one
+                const fullTitlePatterns = [
+                    new RegExp(`#\\s*${escapedDomain}\\s+llm[s-]?full\\.txt\\s*\\n?`, 'gi'),
+                    new RegExp(`#\\s*${escapedDomain}\\s+llm-full\\.txt\\s*\\n?`, 'gi'),
+                    new RegExp(`#\\s*${escapedDomain}\\s+llms-full\\.txt\\s*\\n?`, 'gi'),
+                    new RegExp(`#\\s*${escapedDomain}\\s+llm[s]?full\\.txt\\s*\\n?`, 'gi')
+                ];
+                fullTitlePatterns.forEach(pattern => {
+                    // Replace all occurrences (global flag 'g' handles this)
+                    full = full.replace(pattern, '').trim();
+                });
+                
+                // Additional cleanup: remove any remaining title-like patterns
+                // This catches any variations we might have missed
+                full = full.replace(new RegExp(`^#\\s*${escapedDomain}\\s+.*?full.*?\\s*\\n?`, 'gi'), '').trim();
                 
                 // Format with titles (only add if not already present)
                 content = `# ${domain} llm.txt\n\n${summarized}\n\n\n# ${domain} llm-full.txt\n\n${full}`;

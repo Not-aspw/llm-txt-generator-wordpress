@@ -512,37 +512,28 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
         $original_size = strlen($original_content);
         $original_hash = md5($original_content);
         
-        // COMPREHENSIVE CHECK: Check ALL backups created in the last 10 seconds
-        // This catches duplicates being created in quick succession
-        $all_recent_backups = glob($file_path . '.backup.*');
-        if (!empty($all_recent_backups)) {
+        // AGGRESSIVE DUPLICATE CHECK: Check ALL existing backups for this file
+        // If ANY backup has the same content, return it instead of creating a new one
+        $all_backups = glob($file_path . '.backup.*');
+        if (!empty($all_backups)) {
             // Filter out lock files
-            $all_recent_backups = array_filter($all_recent_backups, function($path) {
-                return strpos($path, '.backup.lock') === false;
+            $all_backups = array_filter($all_backups, function($path) {
+                return strpos($path, '.backup.lock') === false && file_exists($path);
             });
             
-            // Check backups created in the last 10 seconds
-            $current_time = time();
-            foreach ($all_recent_backups as $recent_backup) {
-                if (!file_exists($recent_backup)) {
-                    continue;
-                }
-                
-                $backup_time = filemtime($recent_backup);
-                $time_diff = $current_time - $backup_time;
-                
-                // Only check backups from the last 10 seconds
-                if ($time_diff <= 10) {
-                    $recent_content = @file_get_contents($recent_backup);
-                    if ($recent_content !== false) {
-                        $recent_size = strlen($recent_content);
-                        $recent_hash = md5($recent_content);
-                        
-                        // If content matches, return existing backup immediately
-                        if ($recent_size === $original_size && $recent_hash === $original_hash) {
-                            error_log('KMWP: Duplicate backup prevented - same content found in backup created ' . $time_diff . 's ago: ' . basename($recent_backup));
-                            return $recent_backup;
-                        }
+            // Check ALL backups (not just recent ones) for matching content
+            foreach ($all_backups as $existing_backup) {
+                $backup_content = @file_get_contents($existing_backup);
+                if ($backup_content !== false) {
+                    $backup_size = strlen($backup_content);
+                    $backup_hash = md5($backup_content);
+                    
+                    // If content matches exactly, return existing backup
+                    if ($backup_size === $original_size && $backup_hash === $original_hash) {
+                        $backup_time = filemtime($existing_backup);
+                        $time_diff = time() - $backup_time;
+                        error_log('KMWP: Duplicate backup prevented - existing backup with same content found (' . $time_diff . 's old): ' . basename($existing_backup));
+                        return $existing_backup;
                     }
                 }
             }
@@ -669,15 +660,22 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
                 $backup_path = $file_path . '.backup.' . $timestamp . '-' . $counter;
             }
             
-            // FINAL CHECK: Right before creating the file, check one last time
-            $last_second_check = glob($current_second_pattern);
-            if (!empty($last_second_check)) {
-                foreach ($last_second_check as $last_backup) {
-                    if (file_exists($last_backup)) {
-                        $last_content = @file_get_contents($last_backup);
-                        if ($last_content !== false && strlen($last_content) === $original_size && md5($last_content) === $original_hash) {
-                            error_log('KMWP: Duplicate backup prevented in final pre-write check: ' . basename($last_backup));
-                            return $last_backup;
+            // FINAL CHECK: Right before creating the file, check ALL backups one more time
+            // This is the absolute last chance to prevent a duplicate
+            $final_all_backups = glob($file_path . '.backup.*');
+            if (!empty($final_all_backups)) {
+                $final_all_backups = array_filter($final_all_backups, function($path) {
+                    return strpos($path, '.backup.lock') === false && file_exists($path);
+                });
+                
+                foreach ($final_all_backups as $final_backup) {
+                    $final_content = @file_get_contents($final_backup);
+                    if ($final_content !== false) {
+                        $final_size = strlen($final_content);
+                        $final_hash = md5($final_content);
+                        if ($final_size === $original_size && $final_hash === $original_hash) {
+                            error_log('KMWP: Duplicate backup prevented in ABSOLUTE FINAL check: ' . basename($final_backup));
+                            return $final_backup;
                         }
                     }
                 }
@@ -877,26 +875,21 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
                     return strpos($path, '.backup.lock') === false;
                 });
                 
-                // Check for duplicates
+                // Check for duplicates - check ALL backups regardless of time
                 $duplicate_backups = [];
                 foreach ($all_backups as $check_backup) {
                     if ($check_backup === $backup_path || !file_exists($check_backup)) {
                         continue;
                     }
                     
-                    $check_time = filemtime($check_backup);
-                    $time_diff = abs(filemtime($backup_path) - $check_time);
-                    
-                    // Only check backups created within 10 seconds of each other
-                    if ($time_diff <= 10) {
-                        $check_content = @file_get_contents($check_backup);
-                        if ($check_content !== false) {
-                            $check_hash = md5($check_content);
-                            $check_size = strlen($check_content);
-                            
-                            if ($check_hash === $backup_hash && $check_size === $backup_size) {
-                                $duplicate_backups[] = $check_backup;
-                            }
+                    $check_content = @file_get_contents($check_backup);
+                    if ($check_content !== false) {
+                        $check_hash = md5($check_content);
+                        $check_size = strlen($check_content);
+                        
+                        // If content matches exactly, it's a duplicate
+                        if ($check_hash === $backup_hash && $check_size === $backup_size) {
+                            $duplicate_backups[] = $check_backup;
                         }
                     }
                 }
@@ -1000,19 +993,14 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
                         continue;
                     }
                     
-                    $check_time = filemtime($check_backup);
-                    $time_diff = abs(filemtime($backup_created) - $check_time);
-                    
-                    // Only check backups created within 10 seconds of each other
-                    if ($time_diff <= 10) {
-                        $check_content = @file_get_contents($check_backup);
-                        if ($check_content !== false) {
-                            $check_hash = md5($check_content);
-                            $check_size = strlen($check_content);
-                            
-                            if ($check_hash === $backup_hash && $check_size === $backup_size) {
-                                $duplicate_backups[] = $check_backup;
-                            }
+                    $check_content = @file_get_contents($check_backup);
+                    if ($check_content !== false) {
+                        $check_hash = md5($check_content);
+                        $check_size = strlen($check_content);
+                        
+                        // If content matches exactly, it's a duplicate (check ALL backups, not just recent)
+                        if ($check_hash === $backup_hash && $check_size === $backup_size) {
+                            $duplicate_backups[] = $check_backup;
                         }
                     }
                 }
