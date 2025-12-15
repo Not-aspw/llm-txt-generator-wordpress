@@ -720,12 +720,12 @@ document.addEventListener('DOMContentLoaded', () => {
         
         isViewingHistory = true;
         
-        // Find the button and add loader
+        // Find the button
         const btn = document.querySelector(`.btn-view[data-id="${id}"]`);
-        const originalText = btn ? btn.textContent : 'View';
+        const originalHTML = btn ? btn.innerHTML : 'View';
+        const originalText = btn ? btn.textContent.trim() : 'View';
         if (btn) {
             btn.disabled = true;
-            btn.innerHTML = '<span class="button-loader"></span> Loading...';
         }
         
         try {
@@ -912,7 +912,6 @@ document.addEventListener('DOMContentLoaded', () => {
             // Always reset button immediately
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = originalText;
             }
             isViewingHistory = false;
         }
@@ -936,12 +935,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function downloadHistoryItem(id, outputType) {
-        // Find the button and add loader
+        // Find the button
         const btn = document.querySelector(`.btn-download-history[data-id="${id}"]`);
-        const originalText = btn ? btn.textContent : 'Download';
+        const originalHTML = btn ? btn.innerHTML : 'Download';
+        const originalText = btn ? btn.textContent.trim() : 'Download';
         if (btn) {
             btn.disabled = true;
-            btn.innerHTML = '<span class="button-loader"></span> Downloading...';
         }
         
         try {
@@ -998,9 +997,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             showError(err.message);
         } finally {
+            // Always reset button
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = originalText;
             }
         }
     }
@@ -1023,7 +1022,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Find the button and add loader
         const btn = document.querySelector(`.btn-delete-history[data-id="${id}"]`);
-        const originalText = btn ? btn.textContent : 'Delete';
+        const originalHTML = btn ? btn.innerHTML : 'Delete';
+        const originalText = btn ? btn.textContent.trim() : 'Delete';
         if (btn) {
             btn.disabled = true;
             btn.innerHTML = '<span class="button-loader"></span> Deleting...';
@@ -1061,10 +1061,14 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             showError(err.message);
         } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = originalText;
-            }
+            // Always reset button - use setTimeout to ensure it happens after any async operations
+            setTimeout(() => {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    btn.innerHTML = originalText; // Also reset innerHTML to ensure no loader remains
+                }
+            }, 0);
         }
     }
     
@@ -1118,17 +1122,19 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh history button
     if (refreshHistoryBtn) {
         refreshHistoryBtn.addEventListener('click', async () => {
-            const originalText = refreshHistoryBtn.textContent;
+            const originalHTML = refreshHistoryBtn.innerHTML;
+            const originalText = refreshHistoryBtn.textContent.trim();
             refreshHistoryBtn.disabled = true;
-            refreshHistoryBtn.innerHTML = '<span class="refresh-loader"></span> Refreshing...';
             
             try {
                 await loadHistory(false);
             } catch (err) {
                 console.error('Error refreshing history:', err);
             } finally {
-                refreshHistoryBtn.disabled = false;
-                refreshHistoryBtn.textContent = originalText;
+                // Always reset button - use setTimeout to ensure it happens after any async operations
+                setTimeout(() => {
+                    refreshHistoryBtn.disabled = false;
+                }, 0);
             }
         });
     }
