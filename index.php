@@ -227,12 +227,12 @@ function kmwp_update_history_with_backup($original_file_path, $backup_file_path)
     $table_name = $wpdb->prefix . 'kmwp_file_history';
     $user_id = get_current_user_id();
     
-    // Find history entries that reference this file
     $original_filename = basename($original_file_path);
     $backup_filename = basename($backup_file_path);
     
-    // Update file_path if it contains the original filename
-    // Exclude entries created in the last 3 seconds (to avoid updating the new entry we just created)
+    // Find history entries that reference this file
+    // Allow entries that already have backup for other files (for "Both" type)
+    // Only exclude if THIS specific backup filename already exists in the path
     $results = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT id, file_path, created_at FROM $table_name 
@@ -245,7 +245,7 @@ function kmwp_update_history_with_backup($original_file_path, $backup_file_path)
             $user_id,
             '%' . $wpdb->esc_like($original_filename) . '%',
             '%' . $wpdb->esc_like($original_file_path) . '%',
-            '%backup%'
+            '%' . $wpdb->esc_like($backup_filename) . '%'  // Don't update if this specific backup already exists
         ),
         ARRAY_A
     );
@@ -261,8 +261,8 @@ function kmwp_update_history_with_backup($original_file_path, $backup_file_path)
         
         foreach ($paths as $path) {
             $path = trim($path);
-            // Check if this path matches the original file
-            if ($path === $original_file_path || basename($path) === $original_filename) {
+            // Check if this path matches the original file (not already a backup)
+            if (($path === $original_file_path || basename($path) === $original_filename) && strpos($path, '.backup.') === false) {
                 // Replace with backup path
                 $new_paths[] = $backup_file_path;
                 $updated = true;
@@ -285,8 +285,10 @@ function kmwp_update_history_with_backup($original_file_path, $backup_file_path)
             );
             
             if ($result !== false) {
-                error_log('KMWP: Updated history entry ' . $item['id'] . ' with backup filename: ' . $backup_filename);
+                error_log('KMWP: Updated history entry ' . $item['id'] . ' with backup filename: ' . basename($backup_filename) . '. New path: ' . $new_file_path);
                 return true;
+            } else {
+                error_log('KMWP: Failed to update history entry ' . $item['id'] . '. Error: ' . $wpdb->last_error);
             }
         }
     }
@@ -438,13 +440,58 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
         return;
     }
     
-    $body = json_decode(file_get_contents('php://input'), true);
-    $output_type = sanitize_text_field($body['output_type'] ?? 'llms_txt');
-    $confirm_overwrite = isset($body['confirm_overwrite']) ? (bool)$body['confirm_overwrite'] : false;
-    $website_url = sanitize_text_field($body['website_url'] ?? '');
+    // GLOBAL SAVE LOCK: Prevent multiple simultaneous save operations
+    $global_lock_file = ABSPATH . '.kmwp_save_lock';
+    $global_lock_handle = null;
+    $max_wait = 10; // Wait up to 10 seconds for lock
+    $wait_time = 0;
     
-    // Debug: Log the received data
-    error_log('KMWP: save_to_root called. website_url: ' . $website_url . ', output_type: ' . $output_type);
+    while ($wait_time < $max_wait) {
+        $global_lock_handle = @fopen($global_lock_file, 'x');
+        if ($global_lock_handle !== false) {
+            break;
+        }
+        
+        // Check if lock is stale (older than 30 seconds)
+        if (file_exists($global_lock_file)) {
+            $lock_age = time() - filemtime($global_lock_file);
+            if ($lock_age > 30) {
+                @unlink($global_lock_file);
+                continue;
+            }
+        }
+        
+        usleep(100000); // Wait 0.1 second
+        $wait_time += 0.1;
+    }
+    
+    if ($global_lock_handle === false) {
+        wp_send_json_error('Another save operation is in progress. Please wait and try again.', 429);
+        return;
+    }
+    
+    // Write process ID to lock file
+    fwrite($global_lock_handle, getmypid());
+    fflush($global_lock_handle);
+    
+    // Ensure lock is released even if there's an error
+    register_shutdown_function(function() use ($global_lock_file, $global_lock_handle) {
+        if ($global_lock_handle !== false) {
+            @fclose($global_lock_handle);
+        }
+        if (file_exists($global_lock_file)) {
+            @unlink($global_lock_file);
+        }
+    });
+    
+    try {
+        $body = json_decode(file_get_contents('php://input'), true);
+        $output_type = sanitize_text_field($body['output_type'] ?? 'llms_txt');
+        $confirm_overwrite = isset($body['confirm_overwrite']) ? (bool)$body['confirm_overwrite'] : false;
+        $website_url = sanitize_text_field($body['website_url'] ?? '');
+        
+        // Debug: Log the received data
+        error_log('KMWP: save_to_root called. website_url: ' . $website_url . ', output_type: ' . $output_type);
     
     // Helper function to create backup
     // IMPORTANT: Read content into memory first to ensure we backup the original content
@@ -624,6 +671,46 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
             if ($result === false) {
                 error_log('KMWP: Failed to create backup file: ' . $backup_path);
                 return null;
+            }
+            
+            // VERIFY: After writing, check if another process created a duplicate while we were writing
+            $verify_backups = glob($file_path . '.backup.' . $current_second . '*');
+            if (count($verify_backups) > 1) {
+                // Multiple backups created in the same second - check for duplicates
+                $backup_hashes = [];
+                foreach ($verify_backups as $vb) {
+                    if (file_exists($vb)) {
+                        $vb_content = @file_get_contents($vb);
+                        if ($vb_content !== false) {
+                            $vb_hash = md5($vb_content);
+                            if ($vb_hash === $original_hash) {
+                                $backup_hashes[$vb] = filemtime($vb);
+                            }
+                        }
+                    }
+                }
+                
+                // If we found multiple backups with the same content, keep the oldest one
+                if (count($backup_hashes) > 1) {
+                    asort($backup_hashes); // Sort by modification time (oldest first)
+                    $keep_backup = array_key_first($backup_hashes);
+                    
+                    // Delete all duplicates except the one we're keeping
+                    foreach ($backup_hashes as $duplicate_path => $mtime) {
+                        if ($duplicate_path !== $keep_backup && file_exists($duplicate_path)) {
+                            error_log('KMWP: Duplicate backup detected after write. Keeping: ' . basename($keep_backup) . ', Deleting: ' . basename($duplicate_path));
+                            @unlink($duplicate_path);
+                        }
+                    }
+                    
+                    // Return the backup we kept (might not be the one we just created)
+                    if ($keep_backup !== $backup_path && file_exists($keep_backup)) {
+                        // Another process created it first, delete ours
+                        @unlink($backup_path);
+                        error_log('KMWP: Using existing backup created by another process: ' . basename($keep_backup));
+                        return $keep_backup;
+                    }
+                }
             }
             
             error_log('KMWP: Backup created successfully: ' . basename($backup_path) . ' (size: ' . $original_size . ' bytes, hash: ' . substr($original_hash, 0, 8) . '...)');
@@ -824,6 +911,16 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
     }
     
     wp_send_json_success($response_data);
+    
+    } finally {
+        // Always release the global save lock
+        if ($global_lock_handle !== false) {
+            @fclose($global_lock_handle);
+        }
+        if (file_exists($global_lock_file)) {
+            @unlink($global_lock_file);
+        }
+    }
 });
 
 /* get_history */
