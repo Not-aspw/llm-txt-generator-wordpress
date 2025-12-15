@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Node / build
+node_modules/
+dist/
+build/
+
+# WordPress generated
+wp-content/uploads/
+
+# Env
+.env
+.env.*
+
+# Generated LLM files
+llm.txt
+llm-full.txt
+*.backup.*
+*.lock
