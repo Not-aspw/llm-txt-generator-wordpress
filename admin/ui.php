@@ -71,7 +71,12 @@
     <div class="processing-overlay" id="processingOverlay">
         <div class="spinner-container">
             <div class="logo-spinner">
-                <img src="<?php echo esc_url(plugin_dir_url(dirname(__FILE__)) . 'assets/images/logo.jpeg'); ?>" alt="Logo" class="loader-logo" onerror="this.style.display='none';" />
+                <?php 
+                $logo_path = plugin_dir_path(dirname(__FILE__)) . 'assets/images/logo.jpeg';
+                $logo_url = plugin_dir_url(dirname(__FILE__)) . 'assets/images/logo.jpeg';
+                if (file_exists($logo_path)): ?>
+                    <img src="<?php echo esc_url($logo_url); ?>" alt="Logo" class="loader-logo" />
+                <?php endif; ?>
                 <div class="spinner-ring"></div>
             </div>
             <div class="processing-message">Processing website content...</div>
