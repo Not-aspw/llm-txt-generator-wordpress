@@ -8,6 +8,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const ajaxUrl = kmwp_ajax.ajax_url;
     const nonce = kmwp_ajax.nonce;
 
+    // ========================
+    // Email Verification State
+    // ========================
+    let userVerified = localStorage.getItem('kmwp_user_verified') === 'true';
+    let verifiedEmail = localStorage.getItem('kmwp_verified_email') || '';
+    let pendingEmail = '';
+    let pendingName = '';
+    let otpSent = false;
+
     /**
      * Reusable AJAX fetch helper
      * Automatically attaches nonce to requests
@@ -64,15 +73,137 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteCancelBtn = document.getElementById('deleteCancelBtn');
     const deleteModalCloseBtn = document.getElementById('deleteModalCloseBtn');
     
+    // Email and OTP verification modals
+    const userDetailsModal = document.getElementById('userDetailsModal');
+    const userDetailsForm = document.getElementById('userDetailsForm');
+    const modalCloseBtn = document.getElementById('modalCloseBtn');
+    const otpModal = document.getElementById('otpModal');
+    const otpForm = document.getElementById('otpForm');
+    const otpModalCloseBtn = document.getElementById('otpModalCloseBtn');
+    const resendOtpBtn = document.getElementById('resendOtpBtn');
+    const otpEmailDisplay = document.getElementById('otpEmailDisplay');
+    const otpErrorMsg = document.getElementById('otpErrorMsg');
+    const mainWrapper = document.querySelector('.main-wrapper');
+    
     let isSaving = false; // Prevent duplicate saves
     let isDeleting = false; // Prevent duplicate deletes
     let currentDeleteId = null; // Store ID for delete confirmation
+    let isSubmittingOtp = false; // Prevent duplicate OTP submissions
 
     let selectedOutputType = 'llms_txt';
     let currentOutputContent = '';
     let currentSummarizedContent = '';
     let currentFullContent = '';
     let storedZipBlob = null;
+
+    /* ========================
+       Email Verification Functions
+    ========================*/
+    
+    /**
+     * Check if user is verified and show/hide main content accordingly
+     */
+    function initializeEmailVerification() {
+        // If user not verified, show the email modal
+        if (!userVerified) {
+            showUserDetailsModal();
+            // Hide main content if exists
+            if (mainWrapper) {
+                mainWrapper.style.opacity = '0.5';
+                mainWrapper.style.pointerEvents = 'none';
+            }
+        } else {
+            // User is already verified, show main content
+            if (mainWrapper) {
+                mainWrapper.style.opacity = '1';
+                mainWrapper.style.pointerEvents = 'auto';
+            }
+        }
+    }
+    
+    /**
+     * Show the user details modal for email collection
+     */
+    function showUserDetailsModal() {
+        if (userDetailsModal) {
+            userDetailsModal.classList.add('show');
+        }
+    }
+    
+    /**
+     * Hide the user details modal
+     */
+    function hideUserDetailsModal() {
+        console.log('hideUserDetailsModal called, userDetailsModal exists:', !!userDetailsModal);
+        if (userDetailsModal) {
+            userDetailsModal.classList.remove('show');
+            console.log('User details modal hidden, has show:', userDetailsModal.classList.contains('show'));
+        } else {
+            console.error('User details modal element not found!');
+        }
+    }
+    
+    /**
+     * Show the OTP modal for verification
+     */
+    function showOtpModal() {
+        console.log('showOtpModal called, otpModal exists:', !!otpModal);
+        if (otpModal) {
+            // Ensure modal is not hidden by display: none
+            otpModal.style.display = '';
+            // Remove 'show' class first to reset
+            otpModal.classList.remove('show');
+            // Force reflow to ensure class removal is processed
+            void otpModal.offsetWidth;
+            // Now add show class
+            otpModal.classList.add('show');
+            console.log('OTP Modal class added, has show:', otpModal.classList.contains('show'));
+            console.log('OTP Modal display:', window.getComputedStyle(otpModal).display);
+            console.log('OTP Modal visibility:', window.getComputedStyle(otpModal).visibility);
+            console.log('OTP Modal z-index:', window.getComputedStyle(otpModal).zIndex);
+        } else {
+            console.error('OTP Modal element not found!');
+            // Try to find it again
+            const foundModal = document.getElementById('otpModal');
+            console.log('Retry finding otpModal:', !!foundModal);
+        }
+        // Clear OTP inputs
+        clearOtpInputs();
+    }
+    
+    /**
+     * Hide the OTP modal
+     */
+    function hideOtpModal() {
+        if (otpModal) {
+            otpModal.classList.remove('show');
+        }
+    }
+    
+    /**
+     * Clear all OTP input fields
+     */
+    function clearOtpInputs() {
+        const otpInputs = document.querySelectorAll('.otp-input');
+        otpInputs.forEach(input => {
+            input.value = '';
+        });
+        if (otpErrorMsg) {
+            otpErrorMsg.textContent = '';
+        }
+    }
+    
+    /**
+     * Get the full OTP from individual input fields
+     */
+    function getFullOtp() {
+        const otpInputs = document.querySelectorAll('.otp-input');
+        let otp = '';
+        otpInputs.forEach(input => {
+            otp += input.value;
+        });
+        return otp;
+    }
 
     /* ------------------------
        Helpers
@@ -335,6 +466,345 @@ document.addEventListener('DOMContentLoaded', () => {
                 validateUrlInput(true);
             }, 100);
         });
+    }
+
+    /* ========================
+       Email Verification Event Listeners
+    ========================*/
+    
+    // User details form submission
+    if (userDetailsForm) {
+        userDetailsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formName = document.getElementById('formName');
+            const formEmail = document.getElementById('formEmail');
+            const submitBtn = userDetailsForm.querySelector('.submit-btn');
+            let emailError = document.getElementById('emailValidationError');
+            
+            // Create email error element if it doesn't exist
+            if (!emailError) {
+                emailError = document.createElement('div');
+                emailError.id = 'emailValidationError';
+                emailError.style.color = '#dc2626';
+                emailError.style.fontSize = '13px';
+                emailError.style.marginTop = '4px';
+                emailError.style.display = 'none';
+                formEmail.parentNode.insertBefore(emailError, formEmail.nextSibling);
+            }
+            
+            // Clear previous error
+            emailError.textContent = '';
+            emailError.style.display = 'none';
+            
+            if (!formName.value.trim() || !formEmail.value.trim()) {
+                showError('Please fill in all fields');
+                return;
+            }
+            
+            pendingName = formName.value.trim();
+            pendingEmail = formEmail.value.trim();
+            
+            // Validate email
+            if (!isValidEmail(pendingEmail)) {
+                emailError.textContent = 'Please enter a valid email address';
+                emailError.style.display = 'block';
+                formEmail.focus();
+                return;
+            }
+            
+            // Disable button and show loading state with spinner
+            submitBtn.disabled = true;
+            const originalBtnHTML = submitBtn.innerHTML;
+            submitBtn.innerHTML = '<span class="btn-loader"></span> Sending OTP...';
+            
+            try {
+                const response = await apiFetch('kmwp_send_otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: pendingName,
+                        email: pendingEmail
+                    })
+                });
+                
+                // Parse response regardless of status code
+                const result = await response.json();
+                console.log('OTP Response:', result, 'Status:', response.status);
+                
+                // Check if OTP was sent successfully
+                // Handle both success: true and success: false with success message
+                const isSuccess = result.success === true || 
+                                 (result.data?.message && result.data.message.toLowerCase().includes('successfully'));
+                
+                if (!isSuccess) {
+                    throw new Error(result.data?.message || 'Failed to send OTP');
+                }
+                
+                // Store email for OTP verification
+                otpSent = true;
+                
+                // Show success message
+                showSuccess('OTP sent successfully! Check your email.');
+                
+                // Update OTP modal with email
+                if (otpEmailDisplay) {
+                    otpEmailDisplay.textContent = `Verification code sent to: ${pendingEmail}`;
+                }
+                
+                // Reset button state immediately
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnHTML;
+                
+                console.log('OTP sent successfully, proceeding to modal switch...');
+                
+                // Hide user details modal and show OTP modal
+                setTimeout(() => {
+                    console.log('Switching modals...');
+                    hideUserDetailsModal();
+                    console.log('User details modal hidden');
+                    
+                    // Small delay to ensure first modal is fully hidden
+                    setTimeout(() => {
+                        console.log('About to show OTP modal...');
+                        showOtpModal();
+                        console.log('OTP modal shown');
+                        
+                        // Focus on first OTP input
+                        setTimeout(() => {
+                            const firstOtpInput = document.querySelector('.otp-input[data-index="0"]');
+                            console.log('First OTP input element:', firstOtpInput);
+                            if (firstOtpInput) {
+                                firstOtpInput.focus();
+                                console.log('Focused on first OTP input');
+                            } else {
+                                console.error('First OTP input not found!');
+                            }
+                        }, 100);
+                    }, 300);
+                }, 800);
+                
+            } catch (err) {
+                // Reset button state on error
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnHTML;
+                console.error('Error sending OTP:', err);
+                showError(err.message);
+            }
+        });
+    }
+    
+    // OTP input handling - auto-move between fields
+    const otpInputs = document.querySelectorAll('.otp-input');
+    otpInputs.forEach((input, index) => {
+        input.addEventListener('input', (e) => {
+            // Only allow single digit
+            if (e.target.value.length > 1) {
+                e.target.value = e.target.value.slice(-1);
+            }
+            
+            // Auto-move to next field if value entered
+            if (e.target.value && index < otpInputs.length - 1) {
+                otpInputs[index + 1].focus();
+            }
+        });
+        
+        // Allow backspace to move to previous field
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !e.target.value && index > 0) {
+                otpInputs[index - 1].focus();
+            }
+        });
+        
+        // Allow paste functionality
+        input.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+            const otpChars = pastedText.replace(/\D/g, '').slice(0, 6);
+            
+            // Fill OTP fields with pasted digits
+            otpChars.split('').forEach((char, i) => {
+                if (i < otpInputs.length) {
+                    otpInputs[i].value = char;
+                }
+            });
+            
+            // Focus last filled input or next empty
+            const lastFilledIndex = Math.min(otpChars.length - 1, otpInputs.length - 1);
+            otpInputs[lastFilledIndex].focus();
+        });
+    });
+    
+    // OTP form submission
+    if (otpForm) {
+        otpForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (isSubmittingOtp) {
+                return;
+            }
+            
+            const otp = getFullOtp();
+            const submitBtn = otpForm.querySelector('.submit-btn');
+            
+            if (otp.length !== 6) {
+                if (otpErrorMsg) {
+                    otpErrorMsg.textContent = 'Please enter all 6 digits of the OTP';
+                }
+                return;
+            }
+            
+            isSubmittingOtp = true;
+            submitBtn.disabled = true;
+            
+            try {
+                const response = await apiFetch('kmwp_verify_otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: pendingEmail,
+                        otp: otp
+                    })
+                });
+                
+                // Parse response regardless of status code
+                const result = await response.json();
+                console.log('Verify OTP Response:', result, 'Status:', response.status);
+                
+                // Check if OTP was verified successfully
+                // Handle both success: true and success: false with success message
+                const isSuccess = result.success === true || 
+                                 (result.data?.message && (result.data.message.toLowerCase().includes('verified') || result.data.message.toLowerCase().includes('successfully')));
+                
+                if (!isSuccess) {
+                    const errorMsg = 'Invalid OTP';
+                    if (otpErrorMsg) {
+                        otpErrorMsg.textContent = errorMsg;
+                    }
+                    throw new Error(errorMsg);
+                }
+                
+                // Mark user as verified
+                userVerified = true;
+                verifiedEmail = pendingEmail;
+                localStorage.setItem('kmwp_user_verified', 'true');
+                localStorage.setItem('kmwp_verified_email', pendingEmail);
+                otpSent = false;
+                
+                // Hide OTP modal
+                hideOtpModal();
+                
+                // Show main content
+                if (mainWrapper) {
+                    mainWrapper.style.opacity = '1';
+                    mainWrapper.style.pointerEvents = 'auto';
+                }
+                
+                showSuccess(`Welcome, ${pendingName}! You're verified and ready to generate files.`);
+                
+            } catch (err) {
+                if (otpErrorMsg) {
+                    otpErrorMsg.textContent = err.message;
+                }
+                showError(err.message);
+            } finally {
+                isSubmittingOtp = false;
+                submitBtn.disabled = false;
+            }
+        });
+    }
+    
+    // Resend OTP button
+    if (resendOtpBtn) {
+        resendOtpBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            
+            if (!pendingEmail || !pendingName) {
+                showError('Email information not found');
+                return;
+            }
+            
+            resendOtpBtn.disabled = true;
+            const originalBtnHTML = resendOtpBtn.innerHTML;
+            resendOtpBtn.innerHTML = '<span class="btn-loader"></span> Resending...';
+            
+            try {
+                const response = await apiFetch('kmwp_send_otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: pendingName,
+                        email: pendingEmail
+                    })
+                });
+                
+                // Parse response regardless of status code
+                const result = await response.json();
+                console.log('Resend OTP Response:', result, 'Status:', response.status);
+                
+                // Check if OTP was sent successfully
+                // Handle both success: true and success: false with success message
+                const isSuccess = result.success === true || 
+                                 (result.data?.message && result.data.message.toLowerCase().includes('successfully'));
+                
+                if (!isSuccess) {
+                    throw new Error(result.data?.message || 'Failed to resend OTP');
+                }
+                
+                // Clear previous OTP
+                clearOtpInputs();
+                
+                // Focus on first OTP input
+                const firstOtpInput = document.querySelector('.otp-input[data-index="0"]');
+                if (firstOtpInput) {
+                    firstOtpInput.focus();
+                }
+                
+                showSuccess('OTP resent successfully! Check your email.');
+                
+                // Always reset button state
+                resendOtpBtn.disabled = false;
+                resendOtpBtn.innerHTML = originalBtnHTML;
+                
+            } catch (err) {
+                console.error('Error resending OTP:', err);
+                showError(err.message);
+                // Reset button state on error
+                resendOtpBtn.disabled = false;
+                resendOtpBtn.innerHTML = originalBtnHTML;
+            }
+        });
+    }
+    
+    // Modal close buttons
+    if (modalCloseBtn) {
+        modalCloseBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            // Don't allow closing before verification
+            if (!userVerified) {
+                showError('Please verify your email first');
+                return;
+            }
+            hideUserDetailsModal();
+        });
+    }
+    
+    if (otpModalCloseBtn) {
+        otpModalCloseBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            // Don't allow closing before verification
+            if (!userVerified) {
+                showError('Please verify your OTP first');
+                return;
+            }
+            hideOtpModal();
+        });
+    }
+    
+    // Helper function to validate email
+    function isValidEmail(email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
     }
 
     /* ------------------------
@@ -1429,4 +1899,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+    
+    // Initialize email verification on page load
+    initializeEmailVerification();
 });
+

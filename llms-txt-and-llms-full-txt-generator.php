@@ -502,6 +502,57 @@ add_action('wp_ajax_kmwp_send_otp', function () {
     ]);
 });
 
+/* verify_otp */
+add_action('wp_ajax_kmwp_verify_otp', function () {
+    kmwp_verify_ajax();
+
+    $body = json_decode(file_get_contents('php://input'), true);
+
+    $email = sanitize_email($body['email'] ?? '');
+    $otp = sanitize_text_field($body['otp'] ?? '');
+
+    if (empty($email) || empty($otp) || !is_email($email)) {
+        wp_send_json_error([
+            'message' => 'Invalid email or OTP'
+        ], 400);
+        return;
+    }
+
+    $res = wp_remote_post(
+        'https://llm.attrock.com/verify_otp',
+        [
+            'timeout' => 60,
+            'headers' => [
+                'Content-Type' => 'application/json'
+            ],
+            'body' => json_encode([
+                'email' => $email,
+                'otp' => $otp
+            ])
+        ]
+    );
+
+    if (is_wp_error($res)) {
+        wp_send_json_error([
+            'message' => $res->get_error_message()
+        ], 500);
+        return;
+    }
+
+    $response_body = json_decode(wp_remote_retrieve_body($res), true);
+
+    if (!isset($response_body['success']) || $response_body['success'] !== true) {
+        wp_send_json_error([
+            'message' => $response_body['message'] ?? 'OTP verification failed'
+        ], 400);
+        return;
+    }
+
+    wp_send_json_success([
+        'message' => 'OTP verified successfully'
+    ]);
+});
+
 
 /* prepare_generation */
 add_action('wp_ajax_kmwp_prepare_generation', function () {

@@ -788,6 +788,11 @@
     transform: translateY(0);
   }
   
+  .submit-btn:disabled {
+    opacity: 0.8;
+    cursor: not-allowed;
+  }
+  
   .resend-btn {
     background: #5B41FA;
     border: none;
@@ -807,6 +812,11 @@
   .resend-btn:hover {
     background: #4a36d9;
     transform: translateY(-1px);
+  }
+  
+  .resend-btn:disabled {
+    opacity: 0.8;
+    cursor: not-allowed;
   }
   
   .resend-btn:active {
@@ -1163,6 +1173,18 @@
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     display: inline-block;
+  }
+  
+  .btn-loader {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: middle;
   }
   
   .btn.history:disabled {
