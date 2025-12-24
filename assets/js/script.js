@@ -89,6 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isDeleting = false; // Prevent duplicate deletes
     let currentDeleteId = null; // Store ID for delete confirmation
     let isSubmittingOtp = false; // Prevent duplicate OTP submissions
+    let isResendingOtp = false; // Prevent duplicate resend OTP submissions
 
     let selectedOutputType = 'llms_txt';
     let currentOutputContent = '';
@@ -719,14 +720,25 @@ document.addEventListener('DOMContentLoaded', () => {
         resendOtpBtn.addEventListener('click', async (e) => {
             e.preventDefault();
             
+            // Prevent duplicate requests
+            if (isResendingOtp) {
+                console.log('Resend OTP already in progress');
+                return;
+            }
+            
             if (!pendingEmail || !pendingName) {
                 showError('Email information not found');
                 return;
             }
             
+            isResendingOtp = true;
             resendOtpBtn.disabled = true;
-            const originalBtnHTML = resendOtpBtn.innerHTML;
-            resendOtpBtn.innerHTML = '<span class="btn-loader"></span> Resending...';
+            const originalBtnColor = resendOtpBtn.style.background;
+            const originalBtnText = resendOtpBtn.textContent;
+            
+            // Change button background color to indicate processing
+            resendOtpBtn.style.background = '#94a3b8';
+            resendOtpBtn.textContent = 'Sending...';
             
             try {
                 const response = await apiFetch('kmwp_send_otp', {
@@ -760,18 +772,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     firstOtpInput.focus();
                 }
                 
+                // Show success message
                 showSuccess('OTP resent successfully! Check your email.');
                 
-                // Always reset button state
+                // Reset button after success
+                resendOtpBtn.style.background = originalBtnColor;
+                resendOtpBtn.textContent = originalBtnText;
                 resendOtpBtn.disabled = false;
-                resendOtpBtn.innerHTML = originalBtnHTML;
                 
             } catch (err) {
                 console.error('Error resending OTP:', err);
                 showError(err.message);
-                // Reset button state on error
+                
+                // Reset button on error
+                resendOtpBtn.style.background = originalBtnColor;
+                resendOtpBtn.textContent = originalBtnText;
                 resendOtpBtn.disabled = false;
-                resendOtpBtn.innerHTML = originalBtnHTML;
+            } finally {
+                // Reset flag
+                isResendingOtp = false;
             }
         });
     }
