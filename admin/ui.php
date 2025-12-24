@@ -68,6 +68,15 @@
                 <!-- History items will be loaded here -->
             </div>
         </section>
+        
+        <!-- Thank You Message Section -->
+        <section class="generator-card" id="thankYouSection" style="display: none;">
+            <div class="thank-you-content">
+                <div class="thank-you-icon">✓</div>
+                <h2 class="thank-you-title">Thank you!</h2>
+                <p class="thank-you-message">Your files have been generated and saved successfully.</p>
+            </div>
+        </section>
     </main>
     
     <!-- Processing overlay -->

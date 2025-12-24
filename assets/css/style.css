@@ -38,6 +38,52 @@
     display: none;
   }
   
+  /* Thank You Message Styles */
+  .thank-you-content {
+    text-align: center;
+    padding: 60px 40px;
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  
+  .thank-you-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: #16a34a;
+    color: #fff;
+    font-size: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 30px;
+    font-weight: bold;
+    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
+  }
+  
+  .thank-you-title {
+    font-size: 32px;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 16px;
+  }
+  
+  .thank-you-message {
+    font-size: 18px;
+    color: #64748b;
+    line-height: 1.6;
+    margin: 0;
+  }
+  
+  /* Hide all generator cards when showing thank you */
+  .main-wrapper.show-thank-you .generator-card:not(#thankYouSection) {
+    display: none !important;
+  }
+  
+  .main-wrapper.show-thank-you #thankYouSection {
+    display: block !important;
+  }
+  
   .section-label {
     font-weight: 600;
     margin-bottom: 10px;

@@ -84,6 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const otpEmailDisplay = document.getElementById('otpEmailDisplay');
     const otpErrorMsg = document.getElementById('otpErrorMsg');
     const mainWrapper = document.querySelector('.main-wrapper');
+    const thankYouSection = document.getElementById('thankYouSection');
     
     let isSaving = false; // Prevent duplicate saves
     let isDeleting = false; // Prevent duplicate deletes
@@ -236,6 +237,36 @@ document.addEventListener('DOMContentLoaded', () => {
         statusMessage.className = 'status-message';
         if (statusMessageClose) {
             statusMessageClose.style.display = 'none';
+        }
+    }
+    
+    /**
+     * Show thank you message and hide all other UI elements
+     */
+    function showThankYouMessage() {
+        // Hide all UI elements
+        if (outputSection) {
+            outputSection.style.display = 'none';
+        }
+        
+        if (statusMessage) {
+            statusMessage.style.display = 'none';
+        }
+        
+        // Hide history section if visible
+        const historySection = document.getElementById('historySection');
+        if (historySection) {
+            historySection.style.display = 'none';
+        }
+        
+        // Add class to main wrapper to hide all generator cards except thank you
+        if (mainWrapper) {
+            mainWrapper.classList.add('show-thank-you');
+        }
+        
+        // Show thank you section
+        if (thankYouSection) {
+            thankYouSection.style.display = 'block';
         }
     }
     
@@ -729,10 +760,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         false // Don't show/hide loader again, we're already showing it
                     );
                     
-                    // Hide overlay and show success
+                    // Hide overlay and show thank you message
                     setTimeout(() => {
                         hideProcessingOverlay();
-                        showSuccess(`Welcome, ${pendingName}! Your files have been generated and saved successfully.`);
+                        // Hide all UI elements and show thank you message
+                        showThankYouMessage();
                     }, 1000);
                     
                 } catch (genErr) {
@@ -884,9 +916,10 @@ document.addEventListener('DOMContentLoaded', () => {
      * @param {string} url - The website URL to generate files for
      * @param {string} outputType - The output type ('llms_txt', 'llms_full_txt', or 'llms_both')
      * @param {boolean} showLoader - Whether to show the processing overlay (default: true)
+     * @param {boolean} showOutput - Whether to display the output section (default: true)
      * @returns {Promise<Object>} The generation result with content
      */
-    async function generateFiles(url, outputType = 'llms_both', showLoader = true) {
+    async function generateFiles(url, outputType = 'llms_both', showLoader = true, showOutput = true) {
         // Validate and normalize URL
         const urlValidation = validateAndNormalizeUrl(url);
         if (!urlValidation.valid) {
