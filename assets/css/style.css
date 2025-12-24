@@ -567,6 +567,13 @@
     text-align: center;
   }
   
+  /* Hide close buttons on email, OTP, and file creation modals */
+  #userDetailsModal .btn-close,
+  #otpModal .btn-close,
+  #confirmOverwriteModal .btn-close {
+    display: none !important;
+  }
+  
   .btn-close {
     background: #eef2ff;
     border: none;
@@ -882,11 +889,15 @@
   
   .disclaimer-text {
     text-align: center;
-    color: #ef4444;
+    color: #3b82f6; /* Blue color for info/warning */
     font-size: 12px;
     margin: 0;
     line-height: 1.4;
     font-weight: 500;
+    background: #eff6ff; /* Light blue background */
+    padding: 10px;
+    border-radius: 6px;
+    border-left: 3px solid #3b82f6;
   }
   
   /* Confirmation Modal Styles */

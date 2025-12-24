@@ -369,6 +369,18 @@ add_action('admin_menu', function () {
     );
 });
 
+/* -------------------------
+   Hide Admin Notices on Plugin Page
+--------------------------*/
+add_action('admin_head', function () {
+    $screen = get_current_screen();
+    if ($screen && $screen->id === 'toplevel_page_llm-dashboard') {
+        // Remove admin notices to prevent dismissNotice errors
+        remove_all_actions('admin_notices');
+        remove_all_actions('all_admin_notices');
+    }
+});
+
 
 
 

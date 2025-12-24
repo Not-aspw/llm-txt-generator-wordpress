@@ -1,4 +1,30 @@
 document.addEventListener('DOMContentLoaded', () => {
+    
+    // ========================
+    // PREVENT DUPLICATE SCRIPT EXECUTION
+    // ========================
+    if (window.kmwp_script_loaded) {
+        console.warn('[KMWP] Script already loaded, preventing duplicate execution');
+        return;
+    }
+    window.kmwp_script_loaded = true;
+    console.log('[KMWP] Script loaded and initialized');
+    
+    // ========================
+    // FIX WORDPRESS ADMIN NOTICE DISMISS ERROR
+    // ========================
+    // WordPress core tries to dismiss admin notices but element might not exist
+    // This prevents the "Cannot read properties of null" error
+    if (typeof dismissNotice === 'function') {
+        const originalDismissNotice = dismissNotice;
+        window.dismissNotice = function(dismissBtn) {
+            if (!dismissBtn) {
+                console.warn('[KMWP] dismissNotice called with null element, ignoring');
+                return;
+            }
+            return originalDismissNotice.call(this, dismissBtn);
+        };
+    }
 
     if (typeof kmwp_ajax === 'undefined') {
         console.error('kmwp_ajax not found');
@@ -91,6 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentDeleteId = null; // Store ID for delete confirmation
     let isSubmittingOtp = false; // Prevent duplicate OTP submissions
     let isResendingOtp = false; // Prevent duplicate resend OTP submissions
+    let isSendingOtp = false; // Prevent duplicate OTP sending (Get OTP button)
 
     let selectedOutputType = 'llms_txt';
     let currentOutputContent = '';
@@ -509,10 +536,24 @@ document.addEventListener('DOMContentLoaded', () => {
         userDetailsForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             
+            console.log('[GET OTP] Form submission started');
+            
+            // PREVENT DUPLICATE SUBMISSION
+            if (isSendingOtp) {
+                console.log('[GET OTP] Already sending OTP, ignoring duplicate submission');
+                return;
+            }
+            
             const formName = document.getElementById('formName');
             const formEmail = document.getElementById('formEmail');
             const submitBtn = userDetailsForm.querySelector('.submit-btn');
             let emailError = document.getElementById('emailValidationError');
+            
+            console.log('[GET OTP] Form elements found:', {
+                formName: !!formName,
+                formEmail: !!formEmail,
+                submitBtn: !!submitBtn
+            });
             
             // Create email error element if it doesn't exist
             if (!emailError) {
@@ -530,6 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
             emailError.style.display = 'none';
             
             if (!formName.value.trim() || !formEmail.value.trim()) {
+                console.log('[GET OTP] Validation failed: Empty fields');
                 showError('Please fill in all fields');
                 return;
             }
@@ -537,24 +579,44 @@ document.addEventListener('DOMContentLoaded', () => {
             pendingName = formName.value.trim();
             pendingEmail = formEmail.value.trim();
             
+            console.log('[GET OTP] Form data:', { name: pendingName, email: pendingEmail });
+            
             // Validate email
             if (!isValidEmail(pendingEmail)) {
+                console.log('[GET OTP] Validation failed: Invalid email format');
                 emailError.textContent = 'Please enter a valid email address';
                 emailError.style.display = 'block';
                 formEmail.focus();
                 return;
             }
             
+            // CAPTURE ORIGINAL BUTTON STATE BEFORE ANY CHANGES
+            const originalBtnColor = submitBtn.style.background || '';
+            const originalBtnText = submitBtn.textContent || 'Get OTP';
+            const originalBtnDisabled = submitBtn.disabled;
+            
+            console.log('[GET OTP] Original button state (BEFORE changes):', {
+                disabled: originalBtnDisabled,
+                background: originalBtnColor,
+                text: originalBtnText
+            });
+            
+            // Set flag BEFORE making changes
+            isSendingOtp = true;
+            
             // Disable button and change background color
             submitBtn.disabled = true;
-            const originalBtnColor = submitBtn.style.background;
-            const originalBtnText = submitBtn.textContent;
-            
-            // Change button background color to indicate processing
             submitBtn.style.background = '#94a3b8';
             submitBtn.textContent = 'Sending...';
             
+            console.log('[GET OTP] Button state changed to loading:', {
+                disabled: submitBtn.disabled,
+                background: submitBtn.style.background,
+                text: submitBtn.textContent
+            });
+            
             try {
+                console.log('[GET OTP] Making API call to kmwp_send_otp...');
                 const response = await apiFetch('kmwp_send_otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -564,14 +626,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     })
                 });
                 
+                console.log('[GET OTP] API response received:', {
+                    status: response.status,
+                    ok: response.ok
+                });
+                
                 // Parse response regardless of status code
                 const result = await response.json();
-                console.log('OTP Response:', result, 'Status:', response.status);
+                console.log('[GET OTP] Response data:', result);
                 
                 // Check if OTP was sent successfully
                 // Handle both success: true and success: false with success message
                 const isSuccess = result.success === true || 
                                  (result.data?.message && result.data.message.toLowerCase().includes('successfully'));
+                
+                console.log('[GET OTP] Success check:', { isSuccess, result });
                 
                 if (!isSuccess) {
                     throw new Error(result.data?.message || 'Failed to send OTP');
@@ -589,45 +658,82 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 
                 // Reset button state immediately
-                submitBtn.disabled = false;
+                console.log('[GET OTP] Resetting button state...', {
+                    originalBtnColor,
+                    originalBtnText,
+                    originalBtnDisabled,
+                    currentDisabled: submitBtn.disabled
+                });
+                
+                submitBtn.disabled = originalBtnDisabled;
                 submitBtn.style.background = originalBtnColor;
                 submitBtn.textContent = originalBtnText;
                 
-                console.log('OTP sent successfully, proceeding to modal switch...');
+                console.log('[GET OTP] Button state after reset:', {
+                    disabled: submitBtn.disabled,
+                    background: submitBtn.style.background,
+                    text: submitBtn.textContent
+                });
+                
+                console.log('[GET OTP] OTP sent successfully, proceeding to modal switch...');
                 
                 // Hide user details modal and show OTP modal
                 setTimeout(() => {
-                    console.log('Switching modals...');
+                    console.log('[GET OTP] Switching modals...');
                     hideUserDetailsModal();
-                    console.log('User details modal hidden');
+                    console.log('[GET OTP] User details modal hidden');
                     
                     // Small delay to ensure first modal is fully hidden
                     setTimeout(() => {
-                        console.log('About to show OTP modal...');
+                        console.log('[GET OTP] About to show OTP modal...');
                         showOtpModal();
-                        console.log('OTP modal shown');
+                        console.log('[GET OTP] OTP modal shown');
                         
                         // Focus on first OTP input
                         setTimeout(() => {
                             const firstOtpInput = document.querySelector('.otp-input[data-index="0"]');
-                            console.log('First OTP input element:', firstOtpInput);
+                            console.log('[GET OTP] First OTP input element:', firstOtpInput);
                             if (firstOtpInput) {
                                 firstOtpInput.focus();
-                                console.log('Focused on first OTP input');
+                                console.log('[GET OTP] Focused on first OTP input');
                             } else {
-                                console.error('First OTP input not found!');
+                                console.error('[GET OTP] First OTP input not found!');
                             }
                         }, 100);
                     }, 300);
                 }, 800);
                 
             } catch (err) {
-                // Reset button state on error
-                submitBtn.disabled = false;
+                console.error('[GET OTP] Error caught:', err);
+                console.error('[GET OTP] Error details:', {
+                    message: err.message,
+                    stack: err.stack,
+                    name: err.name
+                });
+                
+                // Reset button state on error - use ORIGINAL values
+                console.log('[GET OTP] Resetting button state on error...', {
+                    originalBtnColor,
+                    originalBtnText,
+                    originalBtnDisabled,
+                    currentDisabled: submitBtn.disabled
+                });
+                
+                submitBtn.disabled = originalBtnDisabled;
                 submitBtn.style.background = originalBtnColor;
                 submitBtn.textContent = originalBtnText;
-                console.error('Error sending OTP:', err);
+                
+                console.log('[GET OTP] Button state after error reset:', {
+                    disabled: submitBtn.disabled,
+                    background: submitBtn.style.background,
+                    text: submitBtn.textContent
+                });
+                
                 showError(err.message);
+            } finally {
+                // ALWAYS reset flag
+                isSendingOtp = false;
+                console.log('[GET OTP] Flag reset, isSendingOtp:', isSendingOtp);
             }
         });
     }
@@ -678,12 +784,20 @@ document.addEventListener('DOMContentLoaded', () => {
         otpForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             
+            console.log('[VERIFY OTP] Form submission started');
+            
             if (isSubmittingOtp) {
+                console.log('[VERIFY OTP] Already submitting, ignoring duplicate submission');
                 return;
             }
             
             const otp = getFullOtp();
             const submitBtn = otpForm.querySelector('.submit-btn');
+            
+            if (!submitBtn) {
+                console.error('[VERIFY OTP] Submit button not found');
+                return;
+            }
             
             if (otp.length !== 6) {
                 if (otpErrorMsg) {
@@ -692,10 +806,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
+            // CAPTURE ORIGINAL BUTTON STATE BEFORE ANY CHANGES
+            const originalBtnColor = submitBtn.style.background || '';
+            const originalBtnText = submitBtn.textContent || 'Verify OTP';
+            const originalBtnDisabled = submitBtn.disabled;
+            
+            console.log('[VERIFY OTP] Original button state (BEFORE changes):', {
+                disabled: originalBtnDisabled,
+                background: originalBtnColor,
+                text: originalBtnText
+            });
+            
+            // Set flag and update button state
             isSubmittingOtp = true;
             submitBtn.disabled = true;
+            submitBtn.style.background = '#94a3b8';
+            submitBtn.textContent = 'Verifying...';
+            
+            console.log('[VERIFY OTP] Button state changed to loading:', {
+                disabled: submitBtn.disabled,
+                background: submitBtn.style.background,
+                text: submitBtn.textContent
+            });
             
             try {
+                console.log('[VERIFY OTP] Making API call to kmwp_verify_otp...');
                 const response = await apiFetch('kmwp_verify_otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -705,14 +840,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     })
                 });
                 
+                console.log('[VERIFY OTP] API response received:', {
+                    status: response.status,
+                    ok: response.ok
+                });
+                
                 // Parse response regardless of status code
                 const result = await response.json();
-                console.log('Verify OTP Response:', result, 'Status:', response.status);
+                console.log('[VERIFY OTP] Response data:', result);
                 
                 // Check if OTP was verified successfully
                 // Handle both success: true and success: false with success message
                 const isSuccess = result.success === true || 
                                  (result.data?.message && (result.data.message.toLowerCase().includes('verified') || result.data.message.toLowerCase().includes('successfully')));
+                
+                console.log('[VERIFY OTP] Success check:', { isSuccess, result });
                 
                 if (!isSuccess) {
                     const errorMsg = 'Invalid OTP';
@@ -775,13 +917,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 
             } catch (err) {
+                console.error('[VERIFY OTP] Error caught:', err);
+                
                 if (otpErrorMsg) {
                     otpErrorMsg.textContent = err.message;
                 }
                 showError(err.message);
             } finally {
+                // ALWAYS reset button state and flag
                 isSubmittingOtp = false;
-                submitBtn.disabled = false;
+                
+                console.log('[VERIFY OTP] Resetting button state...', {
+                    originalBtnColor,
+                    originalBtnText,
+                    originalBtnDisabled
+                });
+                
+                submitBtn.disabled = originalBtnDisabled;
+                submitBtn.style.background = originalBtnColor;
+                submitBtn.textContent = originalBtnText;
+                
+                console.log('[VERIFY OTP] Button state after reset:', {
+                    disabled: submitBtn.disabled,
+                    background: submitBtn.style.background,
+                    text: submitBtn.textContent
+                });
             }
         });
     }
@@ -791,27 +951,56 @@ document.addEventListener('DOMContentLoaded', () => {
         resendOtpBtn.addEventListener('click', async (e) => {
             e.preventDefault();
             
+            console.log('[RESEND OTP] Button clicked');
+            
             // Prevent duplicate requests
             if (isResendingOtp) {
-                console.log('Resend OTP already in progress');
+                console.log('[RESEND OTP] Already in progress, ignoring click');
                 return;
             }
             
             if (!pendingEmail || !pendingName) {
+                console.log('[RESEND OTP] Validation failed: Missing email or name', {
+                    pendingEmail: !!pendingEmail,
+                    pendingName: !!pendingName
+                });
                 showError('Email information not found');
                 return;
             }
             
+            console.log('[RESEND OTP] Pending data:', {
+                email: pendingEmail,
+                name: pendingName
+            });
+            
+            // CAPTURE ORIGINAL BUTTON STATE BEFORE ANY CHANGES
+            const originalBtnColor = resendOtpBtn.style.background || '';
+            const originalBtnText = resendOtpBtn.textContent || 'Resend OTP';
+            const originalBtnDisabled = resendOtpBtn.disabled;
+            
+            console.log('[RESEND OTP] Original button state (BEFORE changes):', {
+                disabled: originalBtnDisabled,
+                background: originalBtnColor,
+                text: originalBtnText,
+                isResendingOtp: isResendingOtp
+            });
+            
             isResendingOtp = true;
             resendOtpBtn.disabled = true;
-            const originalBtnColor = resendOtpBtn.style.background;
-            const originalBtnText = resendOtpBtn.textContent;
             
             // Change button background color to indicate processing
             resendOtpBtn.style.background = '#94a3b8';
             resendOtpBtn.textContent = 'Sending...';
             
+            console.log('[RESEND OTP] Button state changed to loading:', {
+                disabled: resendOtpBtn.disabled,
+                background: resendOtpBtn.style.background,
+                text: resendOtpBtn.textContent,
+                isResendingOtp: isResendingOtp
+            });
+            
             try {
+                console.log('[RESEND OTP] Making API call to kmwp_send_otp...');
                 const response = await apiFetch('kmwp_send_otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -821,14 +1010,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     })
                 });
                 
+                console.log('[RESEND OTP] API response received:', {
+                    status: response.status,
+                    ok: response.ok
+                });
+                
                 // Parse response regardless of status code
                 const result = await response.json();
-                console.log('Resend OTP Response:', result, 'Status:', response.status);
+                console.log('[RESEND OTP] Response data:', result);
                 
                 // Check if OTP was sent successfully
                 // Handle both success: true and success: false with success message
                 const isSuccess = result.success === true || 
                                  (result.data?.message && result.data.message.toLowerCase().includes('successfully'));
+                
+                console.log('[RESEND OTP] Success check:', { isSuccess, result });
                 
                 if (!isSuccess) {
                     throw new Error(result.data?.message || 'Failed to resend OTP');
@@ -836,32 +1032,73 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Clear previous OTP
                 clearOtpInputs();
+                console.log('[RESEND OTP] OTP inputs cleared');
                 
                 // Focus on first OTP input
                 const firstOtpInput = document.querySelector('.otp-input[data-index="0"]');
                 if (firstOtpInput) {
                     firstOtpInput.focus();
+                    console.log('[RESEND OTP] Focused on first OTP input');
+                } else {
+                    console.warn('[RESEND OTP] First OTP input not found');
                 }
                 
                 // Show success message
                 showSuccess('OTP resent successfully! Check your email.');
                 
                 // Reset button after success
+                console.log('[RESEND OTP] Resetting button state after success...', {
+                    originalBtnColor,
+                    originalBtnText,
+                    originalBtnDisabled,
+                    currentDisabled: resendOtpBtn.disabled
+                });
+                
                 resendOtpBtn.style.background = originalBtnColor;
                 resendOtpBtn.textContent = originalBtnText;
-                resendOtpBtn.disabled = false;
+                resendOtpBtn.disabled = originalBtnDisabled;
+                
+                console.log('[RESEND OTP] Button state after success reset:', {
+                    disabled: resendOtpBtn.disabled,
+                    background: resendOtpBtn.style.background,
+                    text: resendOtpBtn.textContent
+                });
                 
             } catch (err) {
-                console.error('Error resending OTP:', err);
+                console.error('[RESEND OTP] Error caught:', err);
+                console.error('[RESEND OTP] Error details:', {
+                    message: err.message,
+                    stack: err.stack,
+                    name: err.name
+                });
+                
                 showError(err.message);
                 
-                // Reset button on error
+                // Reset button on error - use ORIGINAL values
+                console.log('[RESEND OTP] Resetting button state on error...', {
+                    originalBtnColor,
+                    originalBtnText,
+                    originalBtnDisabled,
+                    currentDisabled: resendOtpBtn.disabled
+                });
+                
                 resendOtpBtn.style.background = originalBtnColor;
                 resendOtpBtn.textContent = originalBtnText;
-                resendOtpBtn.disabled = false;
+                resendOtpBtn.disabled = originalBtnDisabled;
+                
+                console.log('[RESEND OTP] Button state after error reset:', {
+                    disabled: resendOtpBtn.disabled,
+                    background: resendOtpBtn.style.background,
+                    text: resendOtpBtn.textContent
+                });
             } finally {
                 // Reset flag
+                console.log('[RESEND OTP] Resetting isResendingOtp flag');
                 isResendingOtp = false;
+                console.log('[RESEND OTP] Final state:', {
+                    isResendingOtp: isResendingOtp,
+                    buttonDisabled: resendOtpBtn.disabled
+                });
             }
         });
     }

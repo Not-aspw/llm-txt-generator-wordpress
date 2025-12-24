@@ -246,7 +246,7 @@
         </div>
     </div>
     
-    <script src="<?php echo esc_url(plugin_dir_url(dirname(__FILE__)) . 'assets/js/script.js'); ?>"></script>
+    <!-- Script is loaded via wp_enqueue_script in main plugin file - no need for direct script tag -->
 </body>
 </html>
 
