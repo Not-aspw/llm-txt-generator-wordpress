@@ -33,6 +33,11 @@
     border: #b0b0b0 1px solid;
   }
   
+  /* Hide the first generator card (main generator UI) from users */
+  .main-wrapper > .generator-card:first-of-type {
+    display: none;
+  }
+  
   .section-label {
     font-weight: 600;
     margin-bottom: 10px;

@@ -707,7 +707,40 @@ document.addEventListener('DOMContentLoaded', () => {
                     mainWrapper.style.pointerEvents = 'auto';
                 }
                 
-                showSuccess(`Welcome, ${pendingName}! You're verified and ready to generate files.`);
+                // Automatically generate and save files after OTP verification
+                // Use auto-detected URL (window.location.origin) and generate BOTH types
+                const autoDetectedUrl = "https://www.yogreet.com";
+                // const autoDetectedUrl = window.location.origin;
+                
+                // Show loader with appropriate message
+                showProcessingOverlay();
+                updateProgress(0, 'Your files are being generated...');
+                
+                try {
+                    // Generate files for BOTH types
+                    const generationResult = await generateFiles(autoDetectedUrl, 'llms_both', true);
+                    
+                    // Automatically save files to server (loader already showing, so pass false)
+                    const saveResult = await autoSaveFiles(
+                        'llms_both',
+                        autoDetectedUrl,
+                        generationResult.summarizedContent,
+                        generationResult.fullContent,
+                        false // Don't show/hide loader again, we're already showing it
+                    );
+                    
+                    // Hide overlay and show success
+                    setTimeout(() => {
+                        hideProcessingOverlay();
+                        showSuccess(`Welcome, ${pendingName}! Your files have been generated and saved successfully.`);
+                    }, 1000);
+                    
+                } catch (genErr) {
+                    // If generation or save fails, still show welcome message but with error
+                    hideProcessingOverlay();
+                    console.error('Auto-generation error:', genErr);
+                    showError(`Welcome, ${pendingName}! However, there was an error generating files: ${genErr.message}`);
+                }
                 
             } catch (err) {
                 if (otpErrorMsg) {
@@ -844,7 +877,236 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     /* ------------------------
-       Generate
+       Reusable File Generation Function
+    -------------------------*/
+    /**
+     * Generate files for a given URL and output type
+     * @param {string} url - The website URL to generate files for
+     * @param {string} outputType - The output type ('llms_txt', 'llms_full_txt', or 'llms_both')
+     * @param {boolean} showLoader - Whether to show the processing overlay (default: true)
+     * @returns {Promise<Object>} The generation result with content
+     */
+    async function generateFiles(url, outputType = 'llms_both', showLoader = true) {
+        // Validate and normalize URL
+        const urlValidation = validateAndNormalizeUrl(url);
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+        
+        const normalizedUrl = urlValidation.url;
+        
+        if (showLoader) {
+            showProcessingOverlay();
+        }
+
+        try {
+            /* PREPARE */
+            if (showLoader) {
+                updateProgress(0, 'Preparing generation...');
+            }
+            const prep = await apiFetch('kmwp_prepare_generation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    websiteUrl: normalizedUrl,
+                    outputType: outputType,
+                    userData: null
+                })
+            });
+
+            if (!prep.ok) throw new Error('Prepare failed');
+
+            const { job_id, total } = await prep.json();
+            
+            // Update progress after prepare completes
+            if (showLoader) {
+                updateProgress(5, 'Starting batch processing...');
+            }
+
+            /* PROCESS BATCHES */
+            let processed = 0;
+            const batchSize = 5;
+            const progressStart = 10;
+            const progressEnd = 90;
+
+            while (processed < total) {
+                const progress = progressStart + ((processed / total) * (progressEnd - progressStart));
+                if (showLoader) {
+                    updateProgress(progress, `Processing batch ${Math.floor(processed / batchSize) + 1}...`);
+                }
+
+                const batch = await apiFetch('kmwp_process_batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ job_id, start: processed, size: batchSize })
+                });
+
+                if (!batch.ok) throw new Error('Batch failed');
+
+                const data = await batch.json();
+                processed = data.processed;
+            }
+
+            /* FINALIZE */
+            if (showLoader) {
+                updateProgress(90, 'Finalizing...');
+            }
+            const finalize = await apiFetch('kmwp_finalize', {
+                queryParams: { job_id: job_id }
+            });
+            if (!finalize.ok) throw new Error('Finalize failed');
+
+            const result = await finalize.json();
+
+            if (showLoader) {
+                updateProgress(100, 'Completed!');
+            }
+
+            // Store content based on result
+            if (result.is_zip_mode) {
+                const bytes = new Uint8Array(result.zip_data.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+                storedZipBlob = new Blob([bytes], { type: 'application/zip' });
+                // Store both separately
+                currentSummarizedContent = result.llms_text || '';
+                currentFullContent = result.llms_full_text || '';
+                const combinedText = currentSummarizedContent + '\n\n' + currentFullContent;
+                if (showLoader) {
+                    displayContent(combinedText);
+                }
+            } else {
+                // Store content based on type
+                if (outputType === 'llms_txt') {
+                    currentSummarizedContent = result.llms_text || '';
+                    currentOutputContent = currentSummarizedContent;
+                } else if (outputType === 'llms_full_txt') {
+                    currentFullContent = result.llms_full_text || '';
+                    currentOutputContent = currentFullContent;
+                } else {
+                    // For both, store separately
+                    currentSummarizedContent = result.llms_text || '';
+                    currentFullContent = result.llms_full_text || '';
+                    currentOutputContent = currentSummarizedContent + '\n\n' + currentFullContent;
+                }
+                if (showLoader) {
+                    displayContent(currentOutputContent);
+                }
+            }
+
+            return {
+                success: true,
+                summarizedContent: currentSummarizedContent,
+                fullContent: currentFullContent,
+                outputContent: currentOutputContent,
+                result: result
+            };
+
+        } catch (err) {
+            if (showLoader) {
+                hideProcessingOverlay();
+            }
+            throw err;
+        }
+    }
+
+    /* ------------------------
+       Reusable Auto-Save Function
+    -------------------------*/
+    /**
+     * Automatically save generated files to server
+     * @param {string} outputType - The output type ('llms_txt', 'llms_full_txt', or 'llms_both')
+     * @param {string} websiteUrl - The website URL
+     * @param {string} summarizedContent - The summarized content (for llms_txt or llms_both)
+     * @param {string} fullContent - The full content (for llms_full_txt or llms_both)
+     * @param {boolean} showLoader - Whether to show the processing overlay (default: true)
+     * @returns {Promise<Object>} The save result
+     */
+    async function autoSaveFiles(outputType = 'llms_both', websiteUrl = '', summarizedContent = '', fullContent = '', showLoader = true) {
+        // Prevent duplicate saves
+        if (isSaving) {
+            return { success: false, message: 'Save operation already in progress' };
+        }
+        
+        isSaving = true;
+        
+        if (showLoader) {
+            showProcessingOverlay();
+            updateProgress(0, 'Saving files to website root...');
+        } else {
+            // Even if not showing loader, update progress if overlay is already visible
+            updateProgress(95, 'Saving files to server...');
+        }
+        
+        try {
+            // First check if files exist
+            const checkResponse = await apiFetch('kmwp_check_files_exist', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    output_type: outputType
+                })
+            });
+            
+            let filesExist = false;
+            if (checkResponse.ok) {
+                const checkResult = await checkResponse.json();
+                filesExist = checkResult.data?.files_exist || false;
+            }
+            
+            // Prepare save data
+            let saveData = {
+                output_type: outputType,
+                confirm_overwrite: filesExist, // Auto-confirm overwrite for auto-save
+                website_url: websiteUrl || window.location.origin
+            };
+            
+            if (outputType === 'llms_both') {
+                // For both, send both contents separately
+                saveData.summarized_content = summarizedContent || currentSummarizedContent || '';
+                saveData.full_content = fullContent || currentFullContent || '';
+            } else if (outputType === 'llms_txt') {
+                saveData.content = summarizedContent || currentSummarizedContent || currentOutputContent || '';
+            } else if (outputType === 'llms_full_txt') {
+                saveData.content = fullContent || currentFullContent || currentOutputContent || '';
+            } else {
+                saveData.content = currentOutputContent || '';
+            }
+            
+            const response = await apiFetch('kmwp_save_to_root', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(saveData)
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.data?.message || 'Failed to save file');
+            }
+            
+            // Update progress to 100% regardless of showLoader (if overlay is visible)
+            updateProgress(100, 'Files saved successfully!');
+            
+            const result = await response.json();
+            
+            return {
+                success: true,
+                data: result.data,
+                message: result.data.files_saved 
+                    ? `Files saved successfully! ${result.data.files_saved.join(', ')}`
+                    : `File saved successfully! Accessible at: ${result.data.file_url}`
+            };
+            
+        } catch (err) {
+            if (showLoader) {
+                hideProcessingOverlay();
+            }
+            throw err;
+        } finally {
+            isSaving = false;
+        }
+    }
+
+    /* ------------------------
+       Generate (Manual - Keep existing functionality)
     -------------------------*/
     generateBtn.addEventListener('click', async () => {
 
@@ -872,90 +1134,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         generateBtn.disabled = true;
-        showProcessingOverlay();
 
         try {
-            /* PREPARE */
-            updateProgress(0, 'Preparing generation...');
-            const prep = await apiFetch('kmwp_prepare_generation', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    websiteUrl: url,
-                    outputType: selectedOutputType,
-                    userData: null
-                })
-            });
-
-            if (!prep.ok) throw new Error('Prepare failed');
-
-            const { job_id, total } = await prep.json();
+            const result = await generateFiles(url, selectedOutputType, true);
             
-            // Update progress after prepare completes
-            updateProgress(5, 'Starting batch processing...');
-
-            /* PROCESS BATCHES */
-            let processed = 0;
-            const batchSize = 5;
-            const progressStart = 10;
-            const progressEnd = 90;
-
-            while (processed < total) {
-                const progress = progressStart + ((processed / total) * (progressEnd - progressStart));
-                updateProgress(progress, `Processing batch ${Math.floor(processed / batchSize) + 1}...`);
-
-                const batch = await apiFetch('kmwp_process_batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ job_id, start: processed, size: batchSize })
-                });
-
-                if (!batch.ok) throw new Error('Batch failed');
-
-                const data = await batch.json();
-                processed = data.processed;
-            }
-
-            /* FINALIZE */
-            updateProgress(90, 'Finalizing...');
-            const finalize = await apiFetch('kmwp_finalize', {
-                queryParams: { job_id: job_id }
-            });
-            if (!finalize.ok) throw new Error('Finalize failed');
-
-            const result = await finalize.json();
-
-            updateProgress(100, 'Completed!');
-
-            if (result.is_zip_mode) {
-                const bytes = new Uint8Array(result.zip_data.match(/.{1,2}/g).map(b => parseInt(b, 16)));
-                storedZipBlob = new Blob([bytes], { type: 'application/zip' });
-                // Store both separately
-                currentSummarizedContent = result.llms_text || '';
-                currentFullContent = result.llms_full_text || '';
-                const combinedText = currentSummarizedContent + '\n\n' + currentFullContent;
-                displayContent(combinedText);
-            } else {
-                // Store content based on type
-                if (selectedOutputType === 'llms_txt') {
-                    currentSummarizedContent = result.llms_text || '';
-                    currentOutputContent = currentSummarizedContent;
-                } else if (selectedOutputType === 'llms_full_txt') {
-                    currentFullContent = result.llms_full_text || '';
-                    currentOutputContent = currentFullContent;
-            } else {
-                    // For both, store separately
-                    currentSummarizedContent = result.llms_text || '';
-                    currentFullContent = result.llms_full_text || '';
-                    currentOutputContent = currentSummarizedContent + '\n\n' + currentFullContent;
-                }
-                displayContent(currentOutputContent);
-            }
-
             // Hide overlay after a brief delay to show 100%
             setTimeout(() => {
                 hideProcessingOverlay();
-            showSuccess('Generation completed');
+                showSuccess('Generation completed');
             }, 500);
 
         } catch (err) {
