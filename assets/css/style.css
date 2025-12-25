@@ -671,6 +671,7 @@
     align-items: center;
     justify-content: center;
     padding: 1rem;
+    margin-top: 20px;
   }
   
   @keyframes fadeIn {
@@ -683,8 +684,8 @@
   }
   
   .modal-dialog {
-    max-width: 450px;
-    width: 100%;
+    max-width: 1400px;
+    width: 95%;
     margin: 0;
     position: relative;
     animation: slideIn 0.3s ease-out;
@@ -771,6 +772,7 @@
     color: white;
     transform: scale(1.05);
     box-shadow: 0 4px 12px rgba(91, 65, 250, 0.3);
+  }
   
   .btn-close:active {
     transform: scale(0.95);
@@ -1680,7 +1682,7 @@
   
   @media (max-width: 768px) {
     .modal-dialog {
-      max-width: 95%;
+      max-width: 100%;
       margin: 1rem;
     }
     
@@ -1714,4 +1716,3 @@
       padding: 9px;
     }
   }
-}
