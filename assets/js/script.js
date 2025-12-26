@@ -2504,20 +2504,25 @@ document.addEventListener('DOMContentLoaded', () => {
                         
                         // Update UI display
                         toggleFrequencyOptions();
-                        if (schedule.frequency) {
-                            updateFrequencyDisplay(schedule.frequency);
+                        if (schedule.enabled && schedule.frequency) {
+                            // Don't auto-open date modal when loading existing settings
+                            updateFrequencyDisplay(schedule.frequency, false);
+                            
+                            // Update previews if values are set (only if enabled)
+                            if (schedule.frequency === 'weekly' && schedule.day_of_week !== undefined) {
+                                updateWeeklyPreview();
+                            }
+                            if (schedule.frequency === 'monthly' && schedule.day_of_month) {
+                                updateMonthlyPreview();
+                            }
+                            
+                            // Update next run time
+                            updateNextRunTime(schedule);
+                        } else {
+                            // Hide previews if scheduling is disabled
+                            if (weeklyDayPreview) weeklyDayPreview.style.display = 'none';
+                            if (monthlyDatePreview) monthlyDatePreview.style.display = 'none';
                         }
-                        
-                        // Update previews if values are set
-                        if (schedule.frequency === 'weekly' && schedule.day_of_week !== undefined) {
-                            updateWeeklyPreview();
-                        }
-                        if (schedule.frequency === 'monthly' && schedule.day_of_month) {
-                            updateMonthlyPreview();
-                        }
-                        
-                        // Update next run time
-                        updateNextRunTime(schedule);
                     }
                 }
             } catch (err) {
@@ -2543,31 +2548,66 @@ document.addEventListener('DOMContentLoaded', () => {
             // Show relevant option based on selected frequency
             const selectedFrequency = document.querySelector('input[name="schedule_frequency"]:checked');
             if (selectedFrequency) {
-                updateFrequencyDisplay(selectedFrequency.value);
+                // Don't auto-open date modal when just enabling checkbox
+                updateFrequencyDisplay(selectedFrequency.value, false);
             }
+            
+            // Update next run time when enabled
+            const currentSchedule = getCurrentScheduleFromForm();
+            updateNextRunTime(currentSchedule);
         } else {
             frequencySection.style.display = 'none';
             weeklyDaySection.style.display = 'none';
             monthlyDateSection.style.display = 'none';
-            saveScheduleBtn.style.display = 'none';
+            // Hide preview messages when disabled
+            if (weeklyDayPreview) weeklyDayPreview.style.display = 'none';
+            if (monthlyDatePreview) monthlyDatePreview.style.display = 'none';
+            // Keep save button visible even when disabled so user can save the disabled state
+            saveScheduleBtn.style.display = 'inline-block';
             nextRunTimeDisplay.style.display = 'none';
         }
     }
     
-    function updateFrequencyDisplay(frequency) {
+    function updateFrequencyDisplay(frequency, autoOpenDateModal = true) {
         weeklyDaySection.style.display = 'none';
         monthlyDateSection.style.display = 'none';
         
         if (frequency === 'weekly') {
             weeklyDaySection.style.display = 'block';
+            // Set default to today's day of week if no day is selected
+            if (dayOfWeekSelect && !dayOfWeekSelect.value) {
+                const today = new Date();
+                const todayDayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+                dayOfWeekSelect.value = todayDayOfWeek;
+            }
             updateWeeklyPreview();
         } else if (frequency === 'monthly') {
-            // Immediately open the date selection modal
-            openDateModal();
+            // Only auto-open date modal when user actively selects Monthly, not when loading settings
+            if (autoOpenDateModal) {
+                // Set default to today's date if no date is selected
+                if (dayOfMonthInput && !dayOfMonthInput.value) {
+                    const today = new Date();
+                    const todayDate = today.getDate(); // 1-31
+                    dayOfMonthInput.value = todayDate;
+                }
+                openDateModal();
+            } else {
+                // Just show the monthly section if date is already selected
+                if (dayOfMonthInput && dayOfMonthInput.value) {
+                    monthlyDateSection.style.display = 'block';
+                    updateMonthlyPreview();
+                }
+            }
         }
     }
     
     function updateWeeklyPreview() {
+        // Don't show preview if scheduling is disabled
+        if (!enableScheduleCheckbox || !enableScheduleCheckbox.checked) {
+            if (weeklyDayPreview) weeklyDayPreview.style.display = 'none';
+            return;
+        }
+        
         if (!dayOfWeekSelect || !dayOfWeekSelect.value) {
             if (weeklyDayPreview) weeklyDayPreview.style.display = 'none';
             return;
@@ -2587,6 +2627,13 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function openDateModal() {
         if (monthlyDateModal) {
+            // Set default to today's date if no date is selected
+            if (dayOfMonthInput && !dayOfMonthInput.value) {
+                const today = new Date();
+                const todayDate = today.getDate(); // 1-31
+                dayOfMonthInput.value = todayDate;
+            }
+            
             monthlyDateModal.classList.add('show');
             monthlyDateModal.style.display = 'flex';
             generateCalendar();
@@ -2614,6 +2661,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function updateMonthlyPreview() {
+        // Don't show preview if scheduling is disabled
+        if (!enableScheduleCheckbox || !enableScheduleCheckbox.checked) {
+            if (monthlyDatePreview) monthlyDatePreview.style.display = 'none';
+            if (monthlyDateSection) monthlyDateSection.style.display = 'none';
+            return;
+        }
+        
         if (!dayOfMonthInput || !dayOfMonthInput.value) {
             if (monthlyDatePreview) monthlyDatePreview.style.display = 'none';
             if (monthlyDateSection) monthlyDateSection.style.display = 'none';
@@ -2681,15 +2735,24 @@ document.addEventListener('DOMContentLoaded', () => {
             monthlyDateGrid.appendChild(dateItem);
         }
         
-        // If there's a saved value, select it
+        // If there's a saved value, select it, otherwise default to today's date
+        let dateToSelect = null;
         if (dayOfMonthInput && dayOfMonthInput.value) {
-            const savedDate = parseInt(dayOfMonthInput.value);
-            if (savedDate >= 1 && savedDate <= 31) {
-                const dateItem = monthlyDateGrid.querySelector(`[data-date="${savedDate}"]`);
-                if (dateItem) {
-                    dateItem.classList.add('selected');
-                    selectedDateInModal = savedDate;
-                }
+            dateToSelect = parseInt(dayOfMonthInput.value);
+        } else {
+            // Default to today's date
+            const today = new Date();
+            dateToSelect = today.getDate(); // 1-31
+            if (dayOfMonthInput) {
+                dayOfMonthInput.value = dateToSelect;
+            }
+        }
+        
+        if (dateToSelect >= 1 && dateToSelect <= 31) {
+            const dateItem = monthlyDateGrid.querySelector(`[data-date="${dateToSelect}"]`);
+            if (dateItem) {
+                dateItem.classList.add('selected');
+                selectedDateInModal = dateToSelect;
             }
         }
         
@@ -2704,6 +2767,11 @@ document.addEventListener('DOMContentLoaded', () => {
             dayOfMonthInput.value = selectedDateInModal;
             closeDateModal();
             updateMonthlyPreview();
+            // Update next run time immediately when monthly date changes
+            if (enableScheduleCheckbox && enableScheduleCheckbox.checked) {
+                const currentSchedule = getCurrentScheduleFromForm();
+                updateNextRunTime(currentSchedule);
+            }
         }
     }
     
@@ -2777,6 +2845,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    // Helper function to get current schedule from form values
+    function getCurrentScheduleFromForm() {
+        const scheduleEnabled = enableScheduleCheckbox ? enableScheduleCheckbox.checked : false;
+        if (!scheduleEnabled) {
+            return { enabled: false };
+        }
+        
+        const frequency = document.querySelector('input[name="schedule_frequency"]:checked')?.value || '';
+        const dayOfWeek = dayOfWeekSelect ? (dayOfWeekSelect.value !== '' ? parseInt(dayOfWeekSelect.value) : 0) : 0;
+        const dayOfMonth = dayOfMonthInput ? (dayOfMonthInput.value !== '' ? parseInt(dayOfMonthInput.value) : 0) : 0;
+        
+        return {
+            enabled: scheduleEnabled,
+            frequency: frequency,
+            day_of_week: dayOfWeek,
+            day_of_month: dayOfMonth
+        };
+    }
+    
     // Schedule Settings Event Listeners
     if (scheduleSettingsBtn) {
         scheduleSettingsBtn.addEventListener('click', openScheduleModal);
@@ -2798,18 +2885,35 @@ document.addEventListener('DOMContentLoaded', () => {
         frequencyRadios.forEach(radio => {
             radio.addEventListener('change', (e) => {
                 updateFrequencyDisplay(e.target.value);
+                // Update next run time immediately when frequency changes
+                if (enableScheduleCheckbox && enableScheduleCheckbox.checked) {
+                    const currentSchedule = getCurrentScheduleFromForm();
+                    updateNextRunTime(currentSchedule);
+                }
             });
         });
     }
     
     // Weekly day selector change listener
     if (dayOfWeekSelect) {
-        dayOfWeekSelect.addEventListener('change', updateWeeklyPreview);
+        dayOfWeekSelect.addEventListener('change', () => {
+            updateWeeklyPreview();
+            // Update next run time immediately when day changes
+            if (enableScheduleCheckbox && enableScheduleCheckbox.checked) {
+                const currentSchedule = getCurrentScheduleFromForm();
+                updateNextRunTime(currentSchedule);
+            }
+        });
     }
     
     if (saveScheduleBtn) {
         saveScheduleBtn.addEventListener('click', async (e) => {
             e.preventDefault();
+            
+            // Prevent double-clicks by disabling only the save button
+            if (saveScheduleBtn.disabled) {
+                return;
+            }
             
             const scheduleEnabled = enableScheduleCheckbox.checked;
             const frequency = document.querySelector('input[name="schedule_frequency"]:checked')?.value || '';
@@ -2831,6 +2935,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
+            // Disable only the save button during save operation
+            const originalSaveBtnText = saveScheduleBtn.textContent;
+            saveScheduleBtn.disabled = true;
+            saveScheduleBtn.textContent = 'Saving...';
+            
             // Save to database via AJAX
             try {
                 const response = await apiFetch('kmwp_save_schedule', {
@@ -2850,6 +2959,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     const errorData = await response.json().catch(() => ({}));
                     const errorMessage = errorData?.data?.message || errorData?.message || 'Failed to save schedule. Please try again.';
                     showScheduleStatusMessage('Error saving schedule: ' + errorMessage, 'warning');
+                    // Re-enable save button on error
+                    saveScheduleBtn.disabled = false;
+                    saveScheduleBtn.textContent = originalSaveBtnText;
                     return;
                 }
                 
@@ -2869,6 +2981,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                     
+                    // Re-enable save button before closing
+                    saveScheduleBtn.disabled = false;
+                    saveScheduleBtn.textContent = originalSaveBtnText;
+                    
+                    // Reload schedule status on main page
+                    loadScheduleStatus();
+                    
                     // Close modal after a short delay
                     setTimeout(() => {
                         closeScheduleModal();
@@ -2876,10 +2995,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     const errorMessage = data?.data?.message || data?.message || 'Failed to save schedule. Please try again.';
                     showScheduleStatusMessage('Error saving schedule: ' + errorMessage, 'warning');
+                    // Re-enable save button on error
+                    saveScheduleBtn.disabled = false;
+                    saveScheduleBtn.textContent = originalSaveBtnText;
                 }
             } catch (err) {
                 console.error('Error saving schedule:', err);
                 alert('Error saving schedule settings');
+                // Re-enable save button on error
+                saveScheduleBtn.disabled = false;
+                saveScheduleBtn.textContent = originalSaveBtnText;
             }
         });
     }

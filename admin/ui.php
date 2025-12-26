@@ -182,15 +182,16 @@
                             <!-- Status Message Area -->
                             <div id="scheduleStatusMessage" class="schedule-status-message" style="display: none;"></div>
                             
-                            <!-- Next Run Time Display -->
-                            <div id="nextRunTimeDisplay" class="next-run-time" style="display: none;">
-                                <strong>Next scheduled run:</strong> <span id="nextRunTimeText"></span>
-                            </div>
-                            
-                            <!-- Action Buttons -->
+                            <!-- Action Buttons with Next Run Time -->
                             <div class="schedule-actions">
-                                <button type="button" id="saveScheduleBtn" class="btn save-schedule" style="display: none;">Save Settings</button>
-                                <button type="button" id="cancelScheduleBtn" class="btn cancel-schedule">Cancel</button>
+                                <!-- Next Run Time Display -->
+                                <div id="nextRunTimeDisplay" class="next-run-time" style="display: none;">
+                                    <strong>Next scheduled run:</strong> <span id="nextRunTimeText"></span>
+                                </div>
+                                <div class="schedule-actions-buttons">
+                                    <button type="button" id="saveScheduleBtn" class="btn save-schedule" style="display: none;">Save Settings</button>
+                                    <button type="button" id="cancelScheduleBtn" class="btn cancel-schedule">Cancel</button>
+                                </div>
                             </div>
                         </form>
                     </div>

@@ -1319,10 +1319,16 @@ add_action('wp_ajax_kmwp_save_schedule', function () {
    GET SCHEDULE SETTINGS AJAX HANDLER
 ========================*/
 add_action('wp_ajax_kmwp_get_schedule', function () {
-    check_ajax_referer('kmwp_nonce');
+    // Verify nonce (die parameter is false so we can handle the response)
+    $nonce_check = check_ajax_referer('kmwp_nonce', 'nonce', false);
+    if ($nonce_check === false) {
+        wp_send_json_error('Security check failed', 403);
+        return;
+    }
     
     if (!is_user_logged_in()) {
         wp_send_json_error('Not authenticated', 401);
+        return;
     }
     
     $user_id = get_current_user_id();
@@ -1797,7 +1803,7 @@ add_action('kmwp_auto_generate_cron', function ($user_id) {
                 'status' => 'success',
                 'auto_saved' => $auto_save
             );
-            update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
+    update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
             
             // Clear failure tracking on success
             delete_option('kmwp_cron_failures_' . $user_id);
