@@ -1050,8 +1050,16 @@ add_action('wp_ajax_kmwp_get_history', function () {
     $filter_source = isset($_GET['filter_source']) ? sanitize_text_field($_GET['filter_source']) : 'all';
     
     // Build WHERE clause for filters
-    $where_conditions = array('user_id = %d');
-    $where_values = array($user_id);
+    // Admin users (user_id 1) should see both their own entries (user_id 1) and auto-generated entries (user_id 0)
+    if ($user_id === 1) {
+        // Admin sees entries from user_id 1 OR user_id 0 (cron-generated)
+        $where_conditions = array('(user_id = %d OR user_id = 0)');
+        $where_values = array($user_id);
+    } else {
+        // Regular users only see their own entries
+        $where_conditions = array('user_id = %d');
+        $where_values = array($user_id);
+    }
     
     // Filter by output type
     if ($filter_output_type !== 'all') {
@@ -1108,7 +1116,7 @@ add_action('wp_ajax_kmwp_get_history', function () {
         $last_cron_run_timestamp = $last_cron_run_data['timestamp'];
     }
     
-    // Escape content for safe output
+    // Escape content for safe output and add source flag
     foreach ($history as &$item) {
         if (isset($item['summarized_content'])) {
             $item['summarized_content'] = wp_kses_post($item['summarized_content']);
@@ -1116,6 +1124,8 @@ add_action('wp_ajax_kmwp_get_history', function () {
         if (isset($item['full_content'])) {
             $item['full_content'] = wp_kses_post($item['full_content']);
         }
+        // Mark entry source: auto (cron, user_id 0) or manual (user-generated)
+        $item['source'] = (isset($item['user_id']) && intval($item['user_id']) === 0) ? 'auto' : 'manual';
     }
     unset($item);
     
@@ -1153,15 +1163,28 @@ add_action('wp_ajax_kmwp_get_history_item', function () {
     global $wpdb;
     $table_name = $wpdb->prefix . 'kmwp_file_history';
     $user_id = get_current_user_id();
-    
-    $item = $wpdb->get_row(
-        $wpdb->prepare(
-            "SELECT * FROM $table_name WHERE id = %d AND user_id = %d",
-            $history_id,
-            $user_id
-        ),
-        ARRAY_A
-    );
+    $is_admin = user_can($user_id, 'manage_options');
+
+    // Allow admins to view both their own history and cron entries (user_id = 0)
+    if ($is_admin) {
+        $item = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM $table_name WHERE id = %d",
+                $history_id
+            ),
+            ARRAY_A
+        );
+    } else {
+        // Non-admin users can only access their own history items
+        $item = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM $table_name WHERE id = %d AND user_id = %d",
+                $history_id,
+                $user_id
+            ),
+            ARRAY_A
+        );
+    }
     
     if (!$item) {
         wp_send_json_error('History item not found', 404);
@@ -1446,8 +1469,15 @@ add_action('wp_ajax_kmwp_save_schedule', function () {
             wp_schedule_event(time(), $recurrence, $hook_name, array($user_id));
         }
     } else {
-        // Remove cron if exists
+        // Remove cron if exists - use aggressive clearing method
         wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
+        
+        // Double-check it was cleared - force unschedule all instances
+        $timestamp = wp_next_scheduled('kmwp_auto_generate_cron', array($user_id));
+        while ($timestamp) {
+            wp_unschedule_event($timestamp, 'kmwp_auto_generate_cron', array($user_id));
+            $timestamp = wp_next_scheduled('kmwp_auto_generate_cron', array($user_id));
+        }
     }
     
     wp_send_json_success(array(

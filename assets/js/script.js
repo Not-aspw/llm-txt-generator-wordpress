@@ -2083,29 +2083,16 @@ document.addEventListener('DOMContentLoaded', () => {
             totalHistoryPages = historyData.total_pages || 1;
             lastCronRunTimestamp = historyData.last_cron_run || null;
             
-            // Apply source filter on frontend (since it requires timestamp comparison)
-            if (activeFilters.source !== 'all' && lastCronRunTimestamp) {
+            // Apply source filter on frontend using explicit source flag from backend
+            if (activeFilters.source !== 'all') {
                 history = history.filter(item => {
-                    if (!item.created_at) return false;
-                    
-                    try {
-                        const entryTime = new Date(item.created_at).getTime();
-                        const cronTime = new Date(lastCronRunTimestamp).getTime();
-                        if (!isNaN(entryTime) && !isNaN(cronTime)) {
-                            const timeDiff = Math.abs(entryTime - cronTime);
-                            const isCronEntry = timeDiff <= 10000; // 10 seconds tolerance
-                            
-                            if (activeFilters.source === 'auto') {
-                                return isCronEntry;
-                            } else if (activeFilters.source === 'manual') {
-                                return !isCronEntry;
-                            }
-                        }
-                    } catch (e) {
-                        // If date parsing fails, treat as manual
-                        return activeFilters.source === 'manual';
+                    const isCronEntry = item.source === 'auto';
+                    if (activeFilters.source === 'auto') {
+                        return isCronEntry;
                     }
-                    
+                    if (activeFilters.source === 'manual') {
+                        return !isCronEntry;
+                    }
                     return true;
                 });
             }
@@ -2144,30 +2131,15 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Get last cron run timestamp for comparison
-        const lastCronRun = paginationData.last_cron_run || lastCronRunTimestamp;
-        
         historyList.innerHTML = history.map(item => {
             const date = new Date(item.created_at).toLocaleString();
             const fileType = item.output_type === 'llms_both' ? 'Both' : 
                             item.output_type === 'llms_full_txt' ? 'Full' : 'Summarized';
             
-            // Determine if this entry was created by cron
-            // Compare entry timestamp with last cron run timestamp (within 10 seconds tolerance)
+            // Determine if this entry was created by cron using explicit source flag
             let isCronEntry = false;
-            if (lastCronRun && item.created_at) {
-                try {
-                    const entryTime = new Date(item.created_at).getTime();
-                    const cronTime = new Date(lastCronRun).getTime();
-                    if (!isNaN(entryTime) && !isNaN(cronTime)) {
-                        const timeDiff = Math.abs(entryTime - cronTime);
-                        // 10 seconds tolerance to account for processing time
-                        isCronEntry = timeDiff <= 10000;
-                    }
-                } catch (e) {
-                    // If date parsing fails, default to manual
-                    isCronEntry = false;
-                }
+            if (typeof item.source !== 'undefined') {
+                isCronEntry = item.source === 'auto';
             }
             
             // Determine filename(s) from file_path or default based on output type
@@ -2218,7 +2190,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div class="history-actions">
                         <button class="btn-view" data-id="${item.id}">View</button>
-                        <button class="btn-delete-history" data-id="${item.id}" data-type="${item.output_type}">Delete</button>
                     </div>
                 </div>
             `;
@@ -2278,14 +2249,12 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Event handler for history actions (event delegation)
     function handleHistoryClick(e) {
-        const target = e.target.closest('.btn-view, .btn-delete-history');
+        const target = e.target.closest('.btn-view');
         if (!target) return;
         
         const id = target.dataset.id;
         if (target.classList.contains('btn-view')) {
             viewHistoryItem(id);
-        } else if (target.classList.contains('btn-delete-history')) {
-            deleteHistoryItem(id);
         }
     }
 
@@ -2321,114 +2290,38 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const result = await response.json();
             const item = result.data;
-            
-            // Update modal title (keep as "View File Content")
-            const historyViewTitle = document.getElementById('historyViewTitle');
-            if (historyViewTitle) historyViewTitle.textContent = 'View File Content';
-            
-            // Get modal elements
-            const historyModalTabs = document.getElementById('historyModalTabs');
-            const historyViewIframe = document.getElementById('historyViewIframe');
-            const historyViewIframeFullTxt = document.getElementById('historyViewIframeFullTxt');
-            
-            // Get raw content
+
+            // Get raw content from history item
             const summarizedContent = (item.summarized_content || '').trim();
             const fullContent = (item.full_content || '').trim();
-            
-            // Handle "both" type - show tabs like output preview modal
-            if (item.output_type === 'llms_both' && summarizedContent && fullContent) {
-                // Show tabs
-                if (historyModalTabs) {
-                    historyModalTabs.style.display = 'flex';
-                }
-                
-                // Show first tab content, hide second
-                const tabContent1 = document.getElementById('history-tab-content-llms_txt');
-                const tabContent2 = document.getElementById('history-tab-content-llms_full_txt');
-                if (tabContent1) {
-                    tabContent1.classList.add('active');
-                    tabContent1.style.display = 'block';
-                }
-                if (tabContent2) {
-                    tabContent2.classList.remove('active');
-                    tabContent2.style.display = 'none';
-                }
-                
-                // Set first tab as active
-                const tabBtn1 = document.getElementById('history-tab-llms-txt');
-                const tabBtn2 = document.getElementById('history-tab-llms-full-txt');
-                if (tabBtn1) tabBtn1.classList.add('active');
-                if (tabBtn2) tabBtn2.classList.remove('active');
-                
-                // Populate both iframes with content (same format as output preview modal)
-                if (historyViewIframe) {
-                    const iframeDoc = historyViewIframe.contentDocument || historyViewIframe.contentWindow.document;
-                    iframeDoc.open();
-                    iframeDoc.write('<html><body style="white-space:pre-wrap;font-family:monospace">' + 
-                        summarizedContent.replace(/</g, '&lt;') + 
-                        '</body></html>');
-                    iframeDoc.close();
-                }
-                
-                if (historyViewIframeFullTxt) {
-                    const iframeDoc = historyViewIframeFullTxt.contentDocument || historyViewIframeFullTxt.contentWindow.document;
-                    iframeDoc.open();
-                    iframeDoc.write('<html><body style="white-space:pre-wrap;font-family:monospace">' + 
-                        fullContent.replace(/</g, '&lt;') + 
-                        '</body></html>');
-                    iframeDoc.close();
-                }
-                
-                // Setup tab click handlers
-                setupHistoryTabsHandler();
+            const outputType = item.output_type || 'llms_both';
+
+            // Sync global state used by the main output preview modal
+            selectedOutputType = outputType;
+
+            if (outputType === 'llms_both') {
+                currentSummarizedContent = summarizedContent;
+                currentFullContent = fullContent;
+                currentOutputContent = `${summarizedContent}\n\n${fullContent}`.trim();
+            } else if (outputType === 'llms_txt') {
+                currentSummarizedContent = summarizedContent;
+                currentFullContent = '';
+                currentOutputContent = summarizedContent;
+            } else if (outputType === 'llms_full_txt') {
+                currentFullContent = fullContent;
+                currentSummarizedContent = '';
+                currentOutputContent = fullContent;
             } else {
-                // Hide tabs for single file types
-                if (historyModalTabs) {
-                    historyModalTabs.style.display = 'none';
-                }
-                
-                // Show first tab content, hide second
-                const tabContent1 = document.getElementById('history-tab-content-llms_txt');
-                const tabContent2 = document.getElementById('history-tab-content-llms_full_txt');
-                if (tabContent1) {
-                    tabContent1.classList.add('active');
-                    tabContent1.style.display = 'block';
-                }
-                if (tabContent2) {
-                    tabContent2.classList.remove('active');
-                    tabContent2.style.display = 'none';
-                }
-                
-                // Determine which content to show
-                let contentToShow = '';
-                if (item.output_type === 'llms_txt') {
-                    contentToShow = summarizedContent;
-                } else {
-                    contentToShow = fullContent;
-                }
-                
-                // Populate main iframe with content (same format as output preview modal)
-                if (historyViewIframe) {
-                    const iframeDoc = historyViewIframe.contentDocument || historyViewIframe.contentWindow.document;
-                    iframeDoc.open();
-                    iframeDoc.write('<html><body style="white-space:pre-wrap;font-family:monospace">' + 
-                        contentToShow.replace(/</g, '&lt;') + 
-                        '</body></html>');
-                    iframeDoc.close();
-                }
-                
-                // Clear full txt iframe
-                if (historyViewIframeFullTxt) {
-                    const iframeDoc = historyViewIframeFullTxt.contentDocument || historyViewIframeFullTxt.contentWindow.document;
-                    iframeDoc.open();
-                    iframeDoc.write('');
-                    iframeDoc.close();
-                }
+                // Fallback: treat as single combined content
+                currentSummarizedContent = summarizedContent || '';
+                currentFullContent = fullContent || '';
+                currentOutputContent = summarizedContent || fullContent || '';
             }
-            
-            // Show modal
-            if (historyViewModal) {
-                historyViewModal.classList.add('show');
+
+            // Open the main output preview modal and render tabs/content
+            if (outputPreviewModal) {
+                outputPreviewModal.classList.add('show');
+                setupOutputTabs();
             }
             
         } catch (err) {
@@ -2666,6 +2559,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const historySection = document.getElementById('historySection');
             if (historySection) {
                 historySection.style.display = 'block';
+                
+                // Reset all filters to 'all' when opening history
+                currentFilters = {
+                    output_type: 'all',
+                    date_range: 'all',
+                    source: 'all'
+                };
+                
+                // Update dropdown values to match
+                const filterOutputType = document.getElementById('filterOutputType');
+                const filterDateRange = document.getElementById('filterDateRange');
+                const filterSource = document.getElementById('filterSource');
+                
+                if (filterOutputType) filterOutputType.value = 'all';
+                if (filterDateRange) filterDateRange.value = 'all';
+                if (filterSource) filterSource.value = 'all';
+                
                 // Load history when section is shown (always start at page 1)
                 await loadHistory(false, 1, currentFilters);
             }
