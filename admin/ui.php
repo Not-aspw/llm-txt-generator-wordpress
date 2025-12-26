@@ -21,9 +21,24 @@
                     <button type="button" id="scheduleSettingsBtn" class="schedule-settings-icon" aria-label="Schedule Settings" title="Schedule Settings">⚙️</button>
                 </div>
                 <div class="toggle-buttons">
-                    <button class="toggle-btn" data-type="llms_txt">LLMs Txt (Summarized)</button>
-                    <button class="toggle-btn" data-type="llms_full_txt">LLMs Full Txt (Full Content)</button>
-                    <button class="toggle-btn active" data-type="llms_both">Both</button>
+                    <button class="toggle-btn" data-type="llms_txt">
+                        <span class="toggle-btn-text">LLMs Txt (Summarized)</span>
+                        <span class="toggle-btn-filename">llm.txt</span>
+                    </button>
+                    <button class="toggle-btn" data-type="llms_full_txt">
+                        <span class="toggle-btn-text">LLMs Full Txt (Full Content)</span>
+                        <span class="toggle-btn-filename">llm-full.txt</span>
+                    </button>
+                    <button class="toggle-btn active" data-type="llms_both">
+                        <span class="toggle-btn-text">Both</span>
+                        <span class="toggle-btn-filename">llm.txt & llm-full.txt</span>
+                    </button>
+                </div>
+                <!-- File Generation Info Message -->
+                <div id="outputTypeInfo" class="output-type-info">
+                    <span class="info-icon">ℹ️</span>
+                    <span id="outputTypeInfoText">llm.txt & llm-full.txt will be generated and will be auto-updated as per your schedule settings.</span>
+                    <button type="button" class="output-type-info-close" id="closeOutputTypeInfoBtn" aria-label="Close">×</button>
                 </div>
             </div>
             <div class="input-row">
@@ -37,6 +52,7 @@
             <!-- Schedule Status Message -->
             <div id="scheduleStatusInfo" class="schedule-status-info" style="display: none;">
                 <span id="scheduleStatusText"></span>
+                <button type="button" class="schedule-status-info-close" id="closeScheduleStatusInfoBtn" aria-label="Close">×</button>
             </div>
         </section>
         <!-- Success Card (Compact) -->
@@ -105,6 +121,10 @@
                             <div class="schedule-section" id="frequencySection" style="display: none;">
                                 <label class="schedule-label">Schedule Frequency:</label>
                                 <div class="frequency-options">
+                                    <label class="frequency-radio">
+                                        <input type="radio" name="schedule_frequency" value="every_minute">
+                                        <span>Every 1 Minute</span>
+                                    </label>
                                     <label class="frequency-radio">
                                         <input type="radio" name="schedule_frequency" value="daily">
                                         <span>Daily</span>

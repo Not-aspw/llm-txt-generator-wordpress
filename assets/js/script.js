@@ -551,18 +551,27 @@ document.addEventListener('DOMContentLoaded', () => {
         // Calculate file sizes
         let stats = [];
         
-        if (selectedOutputType === 'llms_both' && currentSummarizedContent && currentFullContent) {
-            const summSize = Math.round(new Blob([currentSummarizedContent]).size / 1024);
-            const fullSize = Math.round(new Blob([currentFullContent]).size / 1024);
-            stats.push(`<strong>llm.txt:</strong> ${summSize}KB`);
-            stats.push(`<strong>llm-full.txt:</strong> ${fullSize}KB`);
-        } else if (selectedOutputType === 'llms_txt' && currentSummarizedContent) {
-            const size = Math.round(new Blob([currentSummarizedContent]).size / 1024);
-            stats.push(`<strong>llm.txt:</strong> ${size}KB`);
-        } else if (selectedOutputType === 'llms_full_txt' && currentFullContent) {
-            const size = Math.round(new Blob([currentFullContent]).size / 1024);
-            stats.push(`<strong>llm-full.txt:</strong> ${size}KB`);
-        } else if (currentOutputContent) {
+        if (selectedOutputType === 'llms_both') {
+            // For both, show sizes only if content exists and is not empty
+            if (currentSummarizedContent && currentSummarizedContent.trim().length > 0) {
+                const summSize = Math.round(new Blob([currentSummarizedContent]).size / 1024);
+                stats.push(`<strong>llm.txt:</strong> ${summSize}KB`);
+            }
+            if (currentFullContent && currentFullContent.trim().length > 0) {
+                const fullSize = Math.round(new Blob([currentFullContent]).size / 1024);
+                stats.push(`<strong>llm-full.txt:</strong> ${fullSize}KB`);
+            }
+        } else if (selectedOutputType === 'llms_txt') {
+            if (currentSummarizedContent && currentSummarizedContent.trim().length > 0) {
+                const size = Math.round(new Blob([currentSummarizedContent]).size / 1024);
+                stats.push(`<strong>llm.txt:</strong> ${size}KB`);
+            }
+        } else if (selectedOutputType === 'llms_full_txt') {
+            if (currentFullContent && currentFullContent.trim().length > 0) {
+                const size = Math.round(new Blob([currentFullContent]).size / 1024);
+                stats.push(`<strong>llm-full.txt:</strong> ${size}KB`);
+            }
+        } else if (currentOutputContent && currentOutputContent.trim().length > 0) {
             const size = Math.round(new Blob([currentOutputContent]).size / 1024);
             stats.push(`<strong>Total:</strong> ${size}KB`);
         }
@@ -1231,6 +1240,19 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error(urlValidation.error);
         }
         
+        // CLEAR PREVIOUS CONTENT BASED ON OUTPUT TYPE
+        // This prevents old content from showing when generating a different type
+        if (outputType === 'llms_txt') {
+            // Only need summarized, clear full content
+            currentFullContent = '';
+            currentOutputContent = '';
+        } else if (outputType === 'llms_full_txt') {
+            // Only need full content, clear summarized
+            currentSummarizedContent = '';
+            currentOutputContent = '';
+        }
+        // For 'llms_both', both will be set fresh, so no need to clear
+        
         const normalizedUrl = urlValidation.url;
         
         if (showLoader) {
@@ -1316,9 +1338,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (outputType === 'llms_txt') {
                     currentSummarizedContent = result.llms_text || '';
                     currentOutputContent = currentSummarizedContent;
+                    // Clear full content since we're only generating txt
+                    currentFullContent = '';
                 } else if (outputType === 'llms_full_txt') {
                     currentFullContent = result.llms_full_text || '';
                     currentOutputContent = currentFullContent;
+                    // Clear summarized content since we're only generating full txt
+                    currentSummarizedContent = '';
                 } else {
                     // For both, store separately
                     currentSummarizedContent = result.llms_text || '';
@@ -1483,10 +1509,69 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Update selected output type
                 selectedOutputType = this.getAttribute('data-type');
                 console.log('[KMWP DEBUG] Selected output type:', selectedOutputType);
+                
+                // Update the info message
+                updateOutputTypeInfo(selectedOutputType);
             });
         });
     } else {
         console.warn('[KMWP DEBUG] No toggle buttons found in DOM');
+    }
+
+    /* ------------------------
+       Update Output Type Info Message
+    -------------------------*/
+    async function updateOutputTypeInfo(outputType) {
+        const outputTypeInfoText = document.getElementById('outputTypeInfoText');
+        if (!outputTypeInfoText) return;
+        
+        // Determine which files will be generated
+        let filesText = '';
+        if (outputType === 'llms_txt') {
+            filesText = 'llm.txt';
+        } else if (outputType === 'llms_full_txt') {
+            filesText = 'llm-full.txt';
+        } else if (outputType === 'llms_both') {
+            filesText = 'llm.txt & llm-full.txt';
+        }
+        
+        // Get schedule status
+        let scheduleText = '';
+        try {
+            const response = await apiFetch('kmwp_get_schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.data && data.data.schedule && data.data.schedule.enabled) {
+                    const schedule = data.data.schedule;
+                    const frequency = schedule.frequency || 'daily';
+                    let frequencyText = frequency;
+                    
+                    if (frequency === 'every_minute') {
+                        frequencyText = 'every minute';
+                    } else if (frequency === 'daily') {
+                        frequencyText = 'daily';
+                    } else if (frequency === 'weekly') {
+                        frequencyText = 'weekly';
+                    } else if (frequency === 'monthly') {
+                        frequencyText = 'monthly';
+                    }
+                    
+                    scheduleText = ` and will be auto-updated ${frequencyText} as per your schedule settings.`;
+                } else {
+                    scheduleText = ' will be generated. Enable auto-scheduling in settings to automatically update these files.';
+                }
+            }
+        } catch (err) {
+            console.error('Error loading schedule:', err);
+            scheduleText = ' will be generated.';
+        }
+        
+        // Update the message
+        outputTypeInfoText.textContent = `${filesText}${scheduleText}`;
     }
 
     /* ========================
@@ -2572,7 +2657,11 @@ document.addEventListener('DOMContentLoaded', () => {
         weeklyDaySection.style.display = 'none';
         monthlyDateSection.style.display = 'none';
         
-        if (frequency === 'weekly') {
+        if (frequency === 'every_minute') {
+            // No additional options needed for every minute
+            weeklyDaySection.style.display = 'none';
+            monthlyDateSection.style.display = 'none';
+        } else if (frequency === 'weekly') {
             weeklyDaySection.style.display = 'block';
             // Set default to today's day of week if no day is selected
             if (dayOfWeekSelect && !dayOfWeekSelect.value) {
@@ -2797,7 +2886,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const frequency = schedule.frequency || 'daily';
         let nextRun = '';
         
-        if (frequency === 'daily') {
+        if (frequency === 'every_minute') {
+            const nextMinute = new Date();
+            nextMinute.setMinutes(nextMinute.getMinutes() + 1);
+            nextRun = nextMinute.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } else if (frequency === 'daily') {
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             nextRun = tomorrow.toLocaleDateString('en-US', { 
@@ -2935,6 +3035,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
+            // every_minute doesn't need day/week/month selection
+            
             // Disable only the save button during save operation
             const originalSaveBtnText = saveScheduleBtn.textContent;
             saveScheduleBtn.disabled = true;
@@ -2985,8 +3087,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     saveScheduleBtn.disabled = false;
                     saveScheduleBtn.textContent = originalSaveBtnText;
                     
-                    // Reload schedule status on main page
-                    loadScheduleStatus();
+                    // Reload schedule status on main page and update output type info immediately
+                    await loadScheduleStatus();
+                    // Update output type info message immediately with new schedule settings
+                    if (typeof updateOutputTypeInfo === 'function') {
+                        updateOutputTypeInfo(selectedOutputType || 'llms_both');
+                    }
                     
                     // Close modal after a short delay
                     setTimeout(() => {
@@ -3031,6 +3137,11 @@ document.addEventListener('DOMContentLoaded', () => {
                             scheduleStatusInfo.style.display = 'none';
                         }
                     }
+                    
+                    // Update output type info message with latest schedule settings
+                    if (typeof updateOutputTypeInfo === 'function') {
+                        updateOutputTypeInfo(selectedOutputType || 'llms_both');
+                    }
                 }
             }
         } catch (err) {
@@ -3064,8 +3175,32 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
+    // Close button handlers for info messages
+    const closeOutputTypeInfoBtn = document.getElementById('closeOutputTypeInfoBtn');
+    const closeScheduleStatusInfoBtn = document.getElementById('closeScheduleStatusInfoBtn');
+    
+    if (closeOutputTypeInfoBtn) {
+        closeOutputTypeInfoBtn.addEventListener('click', function() {
+            const outputTypeInfo = document.getElementById('outputTypeInfo');
+            if (outputTypeInfo) {
+                outputTypeInfo.style.display = 'none';
+            }
+        });
+    }
+    
+    if (closeScheduleStatusInfoBtn) {
+        closeScheduleStatusInfoBtn.addEventListener('click', function() {
+            const scheduleStatusInfo = document.getElementById('scheduleStatusInfo');
+            if (scheduleStatusInfo) {
+                scheduleStatusInfo.style.display = 'none';
+            }
+        });
+    }
+    
     // Initialize email verification and schedule status on page load
     initializeEmailVerification();
     loadScheduleStatus();
+    // Initialize output type info message
+    updateOutputTypeInfo(selectedOutputType || 'llms_both');
 });
 

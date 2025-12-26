@@ -855,8 +855,10 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
         // Store URL and output type for cron to use
         $user_id = get_current_user_id();
         $last_generation_key = 'kmwp_last_generation_' . $user_id;
+        // For testing: Always use static URL
+        $static_url = 'https://www.yogreet.com';
         update_option($last_generation_key, array(
-            'website_url' => $website_url ?: home_url(),
+            'website_url' => $static_url,
             'output_type' => 'llms_both',
             'updated_at' => current_time('mysql')
         ));
@@ -955,11 +957,43 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
     // Store URL and output type for cron to use
     $user_id = get_current_user_id();
     $last_generation_key = 'kmwp_last_generation_' . $user_id;
+    // For testing: Always use static URL
+    $static_url = 'https://www.yogreet.com';
     update_option($last_generation_key, array(
-        'website_url' => $website_url ?: home_url(),
+        'website_url' => $static_url,
         'output_type' => $output_type,
         'updated_at' => current_time('mysql')
     ));
+    
+    // If schedule is enabled, schedule the cron now (after first generation)
+    $schedule_option_name = 'kmwp_schedule_' . $user_id;
+    $schedule_data = get_option($schedule_option_name);
+    
+    if ($schedule_data && isset($schedule_data['enabled']) && $schedule_data['enabled']) {
+        // Remove old cron if exists
+        wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
+        
+        // Schedule new cron based on frequency
+        $hook_name = 'kmwp_auto_generate_cron';
+        $recurrence = 'daily';
+        
+        if (isset($schedule_data['frequency'])) {
+            if ($schedule_data['frequency'] === 'every_minute') {
+                $recurrence = 'every_minute';
+            } elseif ($schedule_data['frequency'] === 'daily') {
+                $recurrence = 'daily';
+            } elseif ($schedule_data['frequency'] === 'weekly') {
+                $recurrence = 'weekly';
+            } elseif ($schedule_data['frequency'] === 'monthly') {
+                $recurrence = 'monthly';
+            }
+        }
+        
+        // Schedule the event
+        if (!wp_next_scheduled($hook_name, array($user_id))) {
+            wp_schedule_event(time(), $recurrence, $hook_name, array($user_id));
+        }
+    }
     
     wp_send_json_success($response_data);
     
@@ -1251,7 +1285,7 @@ add_action('wp_ajax_kmwp_save_schedule', function () {
     
     // Validate inputs
     if ($schedule_enabled) {
-        if (empty($schedule_frequency) || !in_array($schedule_frequency, ['daily', 'weekly', 'monthly'])) {
+        if (empty($schedule_frequency) || !in_array($schedule_frequency, ['every_minute', 'daily', 'weekly', 'monthly'])) {
             wp_send_json_error(array('message' => 'Please select a valid schedule frequency'));
             return;
         }
@@ -1285,6 +1319,21 @@ add_action('wp_ajax_kmwp_save_schedule', function () {
     
     // If scheduling is enabled, register WordPress cron event
     if ($schedule_enabled) {
+        // Check if user has generated files at least once
+        $last_generation_key = 'kmwp_last_generation_' . $user_id;
+        $last_generation = get_option($last_generation_key, array());
+        
+        // Only schedule cron if user has generated files at least once
+        if (empty($last_generation) || !isset($last_generation['website_url']) || empty($last_generation['website_url'])) {
+            // Don't schedule cron yet - user needs to generate files first
+            wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
+            wp_send_json_success(array(
+                'message' => 'Schedule saved. Please generate files at least once for the cron to start running.',
+                'schedule' => $schedule_data
+            ));
+            return;
+        }
+        
         // Remove old cron if exists
         wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
         
@@ -1292,7 +1341,9 @@ add_action('wp_ajax_kmwp_save_schedule', function () {
         $hook_name = 'kmwp_auto_generate_cron';
         $recurrence = 'daily'; // Default to daily
         
-        if ($schedule_frequency === 'daily') {
+        if ($schedule_frequency === 'every_minute') {
+            $recurrence = 'every_minute';
+        } elseif ($schedule_frequency === 'daily') {
             $recurrence = 'daily';
         } elseif ($schedule_frequency === 'weekly') {
             $recurrence = 'weekly';
@@ -1349,6 +1400,14 @@ add_action('wp_ajax_kmwp_get_schedule', function () {
    CUSTOM CRON INTERVALS
 ========================*/
 add_filter('cron_schedules', function ($schedules) {
+    // Add every_minute schedule for testing
+    if (!isset($schedules['every_minute'])) {
+        $schedules['every_minute'] = array(
+            'interval' => 60, // 60 seconds = 1 minute
+            'display' => 'Every Minute'
+        );
+    }
+    
     if (!isset($schedules['weekly'])) {
         $schedules['weekly'] = array(
             'interval' => 7 * 24 * 60 * 60, // 7 days
@@ -1378,7 +1437,9 @@ add_filter('cron_schedules', function ($schedules) {
 function kmwp_should_run_scheduled_cron($schedule_data) {
     $frequency = $schedule_data['frequency'] ?? 'daily';
     
-    if ($frequency === 'daily') {
+    if ($frequency === 'every_minute') {
+        return true; // Every minute runs every time cron is triggered
+    } elseif ($frequency === 'daily') {
         return true; // Daily runs every time cron is triggered
     } elseif ($frequency === 'weekly') {
         $current_day = (int)date('w'); // 0 = Sunday, 6 = Saturday
@@ -1623,11 +1684,25 @@ add_action('kmwp_auto_generate_cron', function ($user_id) {
     }
     
     // Get URL and output type from last generation (stored when user generates files)
-    // If not available, use defaults
+    // If not available, skip cron - user must generate files at least once
     $last_generation_key = 'kmwp_last_generation_' . $user_id;
     $last_generation = get_option($last_generation_key, array());
-    $website_url = isset($last_generation['website_url']) ? $last_generation['website_url'] : home_url();
+    
+    // Only run cron if user has generated files at least once
+    // For testing: Allow cron to run even without generation data, use static URL
+    if (empty($last_generation) || !isset($last_generation['website_url']) || empty($last_generation['website_url'])) {
+        kmwp_log('No previous file generation found, but using static URL for testing', 'info', array('user_id' => $user_id));
+        // Don't return - continue with static URL for testing
+    }
+    
+    // For testing: Always use static URL
+    $website_url = 'https://www.yogreet.com';
+    // Original code (uncomment after testing):
+    // $website_url = isset($last_generation['website_url']) ? $last_generation['website_url'] : home_url();
     $output_type = isset($last_generation['output_type']) ? $last_generation['output_type'] : 'llms_both';
+    
+    // Debug log to verify URL is being used
+    kmwp_log('DEBUG: Cron using URL: ' . $website_url, 'info', array('user_id' => $user_id, 'url_source' => 'static_for_testing'));
     
     // Auto-save is always enabled
     $auto_save = true;
