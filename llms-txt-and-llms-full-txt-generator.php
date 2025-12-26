@@ -40,19 +40,56 @@
 if (!defined('ABSPATH')) exit;
 
 define('KMWP_VERSION', '1.0.0');
+define('KMWP_PLUGIN_FILE', __FILE__);
 
 /* -------------------------
-   Safe Debug Logger
+   Comprehensive Logging System
 --------------------------*/
 /**
- * Safe debug logging function
- * Only logs if WP_DEBUG is enabled
+ * Enhanced logging function for cron operations
+ * Logs to WordPress debug log and custom log file
  * 
  * @param string $message The message to log
+ * @param string $level Log level (info, warning, error, debug)
+ * @param array $context Additional context data
  * @return void
  */
-function kmwp_log($message) {
-    // Logging disabled - function kept for compatibility
+function kmwp_log($message, $level = 'info', $context = array()) {
+    if (!defined('WP_DEBUG') || !WP_DEBUG) {
+        return; // Only log if debug is enabled
+    }
+    
+    $timestamp = current_time('mysql');
+    $log_entry = sprintf(
+        '[%s] [%s] %s %s',
+        $timestamp,
+        strtoupper($level),
+        $message,
+        !empty($context) ? ' | Context: ' . json_encode($context) : ''
+    );
+    
+    // Log to WordPress debug log
+    error_log($log_entry);
+    
+    // Also log to custom file in wp-content directory
+    $log_file = WP_CONTENT_DIR . '/kmwp-cron.log';
+    @file_put_contents($log_file, $log_entry . PHP_EOL, FILE_APPEND | LOCK_EX);
+}
+
+/**
+ * Log cron operation with structured data
+ * 
+ * @param string $event Event name
+ * @param int $user_id User ID
+ * @param array $data Additional data
+ * @return void
+ */
+function kmwp_log_cron_event($event, $user_id, $data = array()) {
+    kmwp_log(
+        sprintf('Cron Event: %s (User ID: %d)', $event, $user_id),
+        'info',
+        array_merge($data, array('event' => $event, 'user_id' => $user_id))
+    );
 }
 
 add_action('plugins_loaded', function () {
@@ -73,6 +110,11 @@ register_activation_hook(__FILE__, 'kmwp_create_history_table');
    Uninstall Cleanup
 --------------------------*/
 register_uninstall_hook(__FILE__, 'kmwp_uninstall_cleanup');
+
+/* -------------------------
+   Schedule Migration
+--------------------------*/
+require_once(plugin_dir_path(__FILE__) . 'includes/schedule-migration.php');
 
 function kmwp_uninstall_cleanup() {
     // Only delete data if explicitly allowed via filter
@@ -810,6 +852,15 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
             $response_data['website_url'] = $website_url ?: 'Unknown';
         }
         
+        // Store URL and output type for cron to use
+        $user_id = get_current_user_id();
+        $last_generation_key = 'kmwp_last_generation_' . $user_id;
+        update_option($last_generation_key, array(
+            'website_url' => $website_url ?: home_url(),
+            'output_type' => 'llms_both',
+            'updated_at' => current_time('mysql')
+        ));
+        
         wp_send_json_success($response_data);
         return;
     }
@@ -900,6 +951,15 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
         $response_data['output_type'] = $output_type;
         $response_data['website_url'] = $website_url ?: 'Unknown';
     }
+    
+    // Store URL and output type for cron to use
+    $user_id = get_current_user_id();
+    $last_generation_key = 'kmwp_last_generation_' . $user_id;
+    update_option($last_generation_key, array(
+        'website_url' => $website_url ?: home_url(),
+        'output_type' => $output_type,
+        'updated_at' => current_time('mysql')
+    ));
     
     wp_send_json_success($response_data);
     
@@ -1160,5 +1220,629 @@ add_action('wp_ajax_kmwp_delete_history_item', function () {
         wp_send_json_success(['message' => $message, 'files_deleted' => $files_deleted, 'files_failed' => $files_failed]);
     } else {
         wp_send_json_error('Failed to delete history item', 500);
+    }
+});
+
+/* ========================
+   SCHEDULE SETTINGS AJAX HANDLER
+========================*/
+add_action('wp_ajax_kmwp_save_schedule', function () {
+    // Verify nonce (die parameter is false so we can handle the response)
+    $nonce_check = check_ajax_referer('kmwp_nonce', 'nonce', false);
+    if ($nonce_check === false) {
+        wp_send_json_error('Security check failed', 403);
+        return;
+    }
+    
+    if (!is_user_logged_in()) {
+        wp_send_json_error('Not authenticated', 401);
+        return;
+    }
+    
+    global $wpdb;
+    
+    $user_id = get_current_user_id();
+    $input = json_decode(file_get_contents('php://input'), true);
+    
+    $schedule_enabled = isset($input['schedule_enabled']) ? (bool)$input['schedule_enabled'] : false;
+    $schedule_frequency = isset($input['schedule_frequency']) ? sanitize_text_field($input['schedule_frequency']) : '';
+    $schedule_day_of_week = isset($input['schedule_day_of_week']) && $input['schedule_day_of_week'] !== '' ? intval($input['schedule_day_of_week']) : 0;
+    $schedule_day_of_month = isset($input['schedule_day_of_month']) && $input['schedule_day_of_month'] !== '' ? intval($input['schedule_day_of_month']) : 0;
+    
+    // Validate inputs
+    if ($schedule_enabled) {
+        if (empty($schedule_frequency) || !in_array($schedule_frequency, ['daily', 'weekly', 'monthly'])) {
+            wp_send_json_error(array('message' => 'Please select a valid schedule frequency'));
+            return;
+        }
+        
+        if ($schedule_frequency === 'weekly') {
+            if ($schedule_day_of_week < 0 || $schedule_day_of_week > 6) {
+                wp_send_json_error(array('message' => 'Please select a valid day for weekly scheduling'));
+                return;
+            }
+        }
+        
+        if ($schedule_frequency === 'monthly') {
+            if ($schedule_day_of_month < 1 || $schedule_day_of_month > 31) {
+                wp_send_json_error(array('message' => 'Please select a valid date for monthly scheduling'));
+                return;
+            }
+        }
+    }
+    
+    // Store schedule in wp_options (only frequency and day/date settings)
+    $schedule_data = array(
+        'enabled' => $schedule_enabled,
+        'frequency' => $schedule_frequency,
+        'day_of_week' => $schedule_day_of_week,
+        'day_of_month' => $schedule_day_of_month,
+        'updated_at' => current_time('mysql')
+    );
+    
+    $option_name = 'kmwp_schedule_' . $user_id;
+    update_option($option_name, $schedule_data);
+    
+    // If scheduling is enabled, register WordPress cron event
+    if ($schedule_enabled) {
+        // Remove old cron if exists
+        wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
+        
+        // Schedule new cron based on frequency
+        $hook_name = 'kmwp_auto_generate_cron';
+        $recurrence = 'daily'; // Default to daily
+        
+        if ($schedule_frequency === 'daily') {
+            $recurrence = 'daily';
+        } elseif ($schedule_frequency === 'weekly') {
+            $recurrence = 'weekly';
+        } elseif ($schedule_frequency === 'monthly') {
+            $recurrence = 'monthly';
+        }
+        
+        // Schedule the event
+        if (!wp_next_scheduled($hook_name, array($user_id))) {
+            wp_schedule_event(time(), $recurrence, $hook_name, array($user_id));
+        }
+    } else {
+        // Remove cron if exists
+        wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
+    }
+    
+    wp_send_json_success(array(
+        'message' => 'Schedule saved successfully',
+        'schedule' => $schedule_data
+    ));
+});
+
+/* ========================
+   GET SCHEDULE SETTINGS AJAX HANDLER
+========================*/
+add_action('wp_ajax_kmwp_get_schedule', function () {
+    check_ajax_referer('kmwp_nonce');
+    
+    if (!is_user_logged_in()) {
+        wp_send_json_error('Not authenticated', 401);
+    }
+    
+    $user_id = get_current_user_id();
+    $option_name = 'kmwp_schedule_' . $user_id;
+    $schedule_data = get_option($option_name, array(
+        'enabled' => false,
+        'frequency' => 'daily',
+        'day_of_week' => 0,
+        'day_of_month' => 1
+    ));
+    
+    wp_send_json_success(array(
+        'schedule' => $schedule_data
+    ));
+});
+
+/* ========================
+   CUSTOM CRON INTERVALS
+========================*/
+add_filter('cron_schedules', function ($schedules) {
+    if (!isset($schedules['weekly'])) {
+        $schedules['weekly'] = array(
+            'interval' => 7 * 24 * 60 * 60, // 7 days
+            'display' => 'Once weekly'
+        );
+    }
+    
+    if (!isset($schedules['monthly'])) {
+        $schedules['monthly'] = array(
+            'interval' => 30 * 24 * 60 * 60, // 30 days
+            'display' => 'Once monthly'
+        );
+    }
+    
+    return $schedules;
+});
+
+/* ========================
+   CRON HELPER FUNCTIONS
+========================*/
+/**
+ * Check if it's the right time to run scheduled cron
+ * 
+ * @param array $schedule_data Schedule configuration
+ * @return bool True if should run now
+ */
+function kmwp_should_run_scheduled_cron($schedule_data) {
+    $frequency = $schedule_data['frequency'] ?? 'daily';
+    
+    if ($frequency === 'daily') {
+        return true; // Daily runs every time cron is triggered
+    } elseif ($frequency === 'weekly') {
+        $current_day = (int)date('w'); // 0 = Sunday, 6 = Saturday
+        $scheduled_day = isset($schedule_data['day_of_week']) ? (int)$schedule_data['day_of_week'] : 0;
+        return $current_day === $scheduled_day;
+    } elseif ($frequency === 'monthly') {
+        $selected_day = isset($schedule_data['day_of_month']) ? (int)$schedule_data['day_of_month'] : 1;
+        $current_day = (int)date('j'); // Day of month (1-31)
+        $current_month = (int)date('n');
+        $current_year = (int)date('Y');
+        
+        // Get last day of current month
+        $last_day_of_month = (int)date('t', mktime(0, 0, 0, $current_month, 1, $current_year));
+        
+        // Use selected day if it exists, otherwise use last day
+        // This handles edge cases where selected date doesn't exist in current month
+        $target_day = min($selected_day, $last_day_of_month);
+        
+        // Check if today is the target day
+        return $current_day === $target_day;
+    }
+    
+    return false;
+}
+
+/**
+ * Save files from cron with backup and database logging
+ * 
+ * @param string $output_type Output type (llms_txt, llms_full_txt, llms_both)
+ * @param string $website_url Website URL
+ * @param string $summarized_content Summarized content
+ * @param string $full_content Full content
+ * @return array Result array with success status and details
+ */
+function kmwp_cron_save_files($output_type, $website_url, $summarized_content = '', $full_content = '') {
+    kmwp_log('Starting cron file save operation', 'info', array('output_type' => $output_type));
+    
+    // Check file existence before operations
+    $file_existed_before = array();
+    $file_existed_before['llm.txt'] = file_exists(ABSPATH . 'llm.txt');
+    $file_existed_before['llm-full.txt'] = file_exists(ABSPATH . 'llm-full.txt');
+    
+    // Initialize backup registry
+    if (!isset($GLOBALS['kmwp_backed_up_files'])) {
+        $GLOBALS['kmwp_backed_up_files'] = array();
+    }
+    
+    $saved_files = array();
+    $errors = array();
+    $backups_created = array();
+    $files_backed_up = array();
+    
+    // Handle "Both" option
+    if ($output_type === 'llms_both') {
+        // Save summarized version (llm.txt)
+        if (!empty($summarized_content)) {
+            $file_path_summary = ABSPATH . 'llm.txt';
+            
+            // Create backup if file existed
+            if ($file_existed_before['llm.txt'] && !in_array($file_path_summary, $files_backed_up)) {
+                $backup = kmwp_create_backup_once($file_path_summary);
+                if ($backup) {
+                    $backups_created[] = basename($backup);
+                    $files_backed_up[] = $file_path_summary;
+                    kmwp_update_history_with_backup($file_path_summary, $backup);
+                    kmwp_log('Backup created for llm.txt', 'info', array('backup' => $backup));
+                }
+            }
+            
+            $result_summary = @file_put_contents($file_path_summary, $summarized_content);
+            if ($result_summary !== false) {
+                $saved_files[] = array(
+                    'filename' => 'llm.txt',
+                    'file_url' => home_url('/llm.txt'),
+                    'file_path' => $file_path_summary
+                );
+                kmwp_log('Successfully saved llm.txt', 'info', array('bytes' => $result_summary));
+            } else {
+                $errors[] = 'Failed to save llm.txt';
+                kmwp_log('Failed to save llm.txt', 'error');
+            }
+        }
+        
+        // Save full content version (llm-full.txt)
+        if (!empty($full_content)) {
+            $file_path_full = ABSPATH . 'llm-full.txt';
+            
+            // Create backup if file existed
+            if ($file_existed_before['llm-full.txt'] && !in_array($file_path_full, $files_backed_up)) {
+                $backup = kmwp_create_backup_once($file_path_full);
+                if ($backup) {
+                    $backups_created[] = basename($backup);
+                    $files_backed_up[] = $file_path_full;
+                    kmwp_update_history_with_backup($file_path_full, $backup);
+                    kmwp_log('Backup created for llm-full.txt', 'info', array('backup' => $backup));
+                }
+            }
+            
+            $result_full = @file_put_contents($file_path_full, $full_content);
+            if ($result_full !== false) {
+                $saved_files[] = array(
+                    'filename' => 'llm-full.txt',
+                    'file_url' => home_url('/llm-full.txt'),
+                    'file_path' => $file_path_full
+                );
+                kmwp_log('Successfully saved llm-full.txt', 'info', array('bytes' => $result_full));
+            } else {
+                $errors[] = 'Failed to save llm-full.txt';
+                kmwp_log('Failed to save llm-full.txt', 'error');
+            }
+        }
+    } else {
+        // Handle single file saves
+        $content = ($output_type === 'llms_txt') ? $summarized_content : $full_content;
+        $filename = ($output_type === 'llms_txt') ? 'llm.txt' : 'llm-full.txt';
+        $file_path = ABSPATH . $filename;
+        
+        if (!empty($content)) {
+            // Create backup if file existed
+            if ($file_existed_before[$filename]) {
+                $backup = kmwp_create_backup_once($file_path);
+                if ($backup) {
+                    $backups_created[] = basename($backup);
+                    kmwp_update_history_with_backup($file_path, $backup);
+                    kmwp_log('Backup created for ' . $filename, 'info', array('backup' => $backup));
+                }
+            }
+            
+            $result = @file_put_contents($file_path, $content);
+            if ($result !== false) {
+                $saved_files[] = array(
+                    'filename' => $filename,
+                    'file_url' => home_url('/' . $filename),
+                    'file_path' => $file_path
+                );
+                kmwp_log('Successfully saved ' . $filename, 'info', array('bytes' => $result));
+            } else {
+                $errors[] = 'Failed to save ' . $filename;
+                kmwp_log('Failed to save ' . $filename, 'error');
+            }
+        }
+    }
+    
+    // Save to history database
+    $file_paths = array();
+    foreach ($saved_files as $file) {
+        if (strpos($file['file_path'], '.backup.') === false) {
+            $file_paths[] = $file['file_path'];
+        }
+    }
+    
+    if (!empty($saved_files)) {
+        $history_id = kmwp_save_file_history(
+            $website_url ?: 'Unknown',
+            $output_type,
+            $summarized_content,
+            $full_content,
+            implode(', ', $file_paths)
+        );
+        
+        if ($history_id !== false) {
+            kmwp_log('File history saved', 'info', array('history_id' => $history_id));
+        }
+    }
+    
+    return array(
+        'success' => empty($errors),
+        'saved_files' => $saved_files,
+        'backups_created' => $backups_created,
+        'errors' => $errors
+    );
+}
+
+/**
+ * Track cron failures and send notifications
+ * 
+ * @param int $user_id User ID
+ * @param string $error_message Error message
+ * @return void
+ */
+function kmwp_track_cron_failure($user_id, $error_message) {
+    $failure_key = 'kmwp_cron_failures_' . $user_id;
+    $failures = get_option($failure_key, array());
+    
+    $failures[] = array(
+        'timestamp' => current_time('mysql'),
+        'error' => $error_message
+    );
+    
+    // Keep only last 10 failures
+    if (count($failures) > 10) {
+        $failures = array_slice($failures, -10);
+    }
+    
+    update_option($failure_key, $failures);
+    
+    // If 3+ consecutive failures, log warning
+    if (count($failures) >= 3) {
+        $recent_failures = array_slice($failures, -3);
+        $all_same = count(array_unique(array_column($recent_failures, 'error'))) === 1;
+        
+        if ($all_same) {
+            kmwp_log(
+                'CRITICAL: 3+ consecutive cron failures detected',
+                'error',
+                array('user_id' => $user_id, 'failures' => $recent_failures)
+            );
+        }
+    }
+}
+
+/* ========================
+   AUTO-GENERATION CRON HOOK
+========================*/
+add_action('kmwp_auto_generate_cron', function ($user_id) {
+    // Check if WP-Cron is disabled
+    if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) {
+        kmwp_log(
+            'WP-Cron is disabled. Use system cron to call wp-cron.php',
+            'warning',
+            array('user_id' => $user_id)
+        );
+        return;
+    }
+    
+    kmwp_log_cron_event('cron_started', $user_id);
+    
+    // Get schedule settings for this user
+    $option_name = 'kmwp_schedule_' . $user_id;
+    $schedule_data = get_option($option_name);
+    
+    // Check if schedule is enabled
+    if (!$schedule_data || !isset($schedule_data['enabled']) || !$schedule_data['enabled']) {
+        kmwp_log('Schedule is disabled, exiting', 'info', array('user_id' => $user_id));
+        return;
+    }
+    
+    // Check if it's the right time to run
+    if (!kmwp_should_run_scheduled_cron($schedule_data)) {
+        kmwp_log('Not the scheduled time, skipping', 'info', array('user_id' => $user_id, 'schedule' => $schedule_data));
+        return;
+    }
+    
+    // Get URL and output type from last generation (stored when user generates files)
+    // If not available, use defaults
+    $last_generation_key = 'kmwp_last_generation_' . $user_id;
+    $last_generation = get_option($last_generation_key, array());
+    $website_url = isset($last_generation['website_url']) ? $last_generation['website_url'] : home_url();
+    $output_type = isset($last_generation['output_type']) ? $last_generation['output_type'] : 'llms_both';
+    
+    // Auto-save is always enabled
+    $auto_save = true;
+    
+    kmwp_log('Starting cron generation', 'info', array(
+        'user_id' => $user_id,
+        'website_url' => $website_url,
+        'output_type' => $output_type,
+        'auto_save' => $auto_save
+    ));
+    
+    // Update last run time
+    $log_entry = array(
+        'event' => 'cron_processing',
+        'user_id' => $user_id,
+        'website_url' => $website_url,
+        'output_type' => $output_type,
+        'timestamp' => current_time('mysql'),
+        'status' => 'processing'
+    );
+    update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
+    
+    $max_retries = 3;
+    $retry_count = 0;
+    $success = false;
+    $error_message = '';
+    
+    while ($retry_count < $max_retries && !$success) {
+        try {
+            if ($retry_count > 0) {
+                kmwp_log('Retrying cron operation', 'warning', array('attempt' => $retry_count + 1, 'max' => $max_retries));
+                sleep(2); // Wait 2 seconds before retry
+            }
+            
+            // Step 1: Prepare generation
+            kmwp_log('Step 1: Preparing generation', 'info', array('website_url' => $website_url, 'output_type' => $output_type));
+            $prepare_body = array(
+                'websiteUrl' => $website_url,
+                'outputType' => $output_type,
+                'userData' => null
+            );
+            
+            $prepare_response = kmwp_proxy('prepare_generation', 'POST', $prepare_body);
+            
+            if (is_wp_error($prepare_response)) {
+                throw new Exception('Prepare generation failed: ' . $prepare_response->get_error_message());
+            }
+            
+            $response_code = wp_remote_retrieve_response_code($prepare_response);
+            if ($response_code !== 200) {
+                $response_body = wp_remote_retrieve_body($prepare_response);
+                throw new Exception('Prepare generation failed with status ' . $response_code . ': ' . $response_body);
+            }
+            
+            $prepare_data = json_decode(wp_remote_retrieve_body($prepare_response), true);
+            
+            if (!isset($prepare_data['job_id']) || !isset($prepare_data['total'])) {
+                throw new Exception('Invalid prepare response: ' . json_encode($prepare_data));
+            }
+            
+            $job_id = $prepare_data['job_id'];
+            $total = $prepare_data['total'];
+            
+            kmwp_log('Generation prepared', 'info', array('job_id' => $job_id, 'total' => $total));
+            
+            // Step 2: Process batches
+            kmwp_log('Step 2: Processing batches', 'info', array('total' => $total));
+            $processed = 0;
+            $batch_size = 5;
+            $batch_count = 0;
+            
+            while ($processed < $total) {
+                $batch_count++;
+                kmwp_log('Processing batch', 'debug', array('batch' => $batch_count, 'processed' => $processed, 'total' => $total));
+                
+                $batch_body = array(
+                    'job_id' => $job_id,
+                    'start' => $processed,
+                    'size' => $batch_size
+                );
+                
+                $batch_response = kmwp_proxy('process_batch', 'POST', $batch_body);
+                
+                if (is_wp_error($batch_response)) {
+                    throw new Exception('Process batch failed: ' . $batch_response->get_error_message());
+                }
+                
+                $batch_response_code = wp_remote_retrieve_response_code($batch_response);
+                if ($batch_response_code !== 200) {
+                    $batch_response_body = wp_remote_retrieve_body($batch_response);
+                    throw new Exception('Process batch failed with status ' . $batch_response_code . ': ' . $batch_response_body);
+                }
+                
+                $batch_data = json_decode(wp_remote_retrieve_body($batch_response), true);
+                
+                if (!isset($batch_data['processed'])) {
+                    throw new Exception('Invalid batch response: ' . json_encode($batch_data));
+                }
+                
+                $processed = $batch_data['processed'];
+            }
+            
+            kmwp_log('All batches processed', 'info', array('total_batches' => $batch_count));
+            
+            // Step 3: Finalize
+            kmwp_log('Step 3: Finalizing generation', 'info', array('job_id' => $job_id));
+            $finalize_response = kmwp_proxy("finalize/$job_id", 'GET');
+            
+            if (is_wp_error($finalize_response)) {
+                throw new Exception('Finalize failed: ' . $finalize_response->get_error_message());
+            }
+            
+            $finalize_response_code = wp_remote_retrieve_response_code($finalize_response);
+            if ($finalize_response_code !== 200) {
+                $finalize_response_body = wp_remote_retrieve_body($finalize_response);
+                throw new Exception('Finalize failed with status ' . $finalize_response_code . ': ' . $finalize_response_body);
+            }
+            
+            $result = json_decode(wp_remote_retrieve_body($finalize_response), true);
+            
+            if (!$result) {
+                throw new Exception('Invalid finalize response');
+            }
+            
+            kmwp_log('Generation finalized', 'info', array('result_keys' => array_keys($result)));
+            
+            // Extract content based on output type
+            $summarized_content = '';
+            $full_content = '';
+            
+            if (isset($result['is_zip_mode']) && $result['is_zip_mode']) {
+                $summarized_content = $result['llms_text'] ?? '';
+                $full_content = $result['llms_full_text'] ?? '';
+            } else {
+                if ($output_type === 'llms_txt') {
+                    $summarized_content = $result['llms_text'] ?? '';
+                } elseif ($output_type === 'llms_full_txt') {
+                    $full_content = $result['llms_full_text'] ?? '';
+                } else {
+                    // Both
+                    $summarized_content = $result['llms_text'] ?? '';
+                    $full_content = $result['llms_full_text'] ?? '';
+                }
+            }
+            
+            // Step 4: Save files if auto_save is enabled
+            if ($auto_save) {
+                kmwp_log('Step 4: Auto-saving files', 'info', array('auto_save' => true));
+                $save_result = kmwp_cron_save_files($output_type, $website_url, $summarized_content, $full_content);
+                
+                if ($save_result['success']) {
+                    kmwp_log('Files saved successfully', 'info', array(
+                        'files' => array_column($save_result['saved_files'], 'filename'),
+                        'backups' => $save_result['backups_created']
+                    ));
+                } else {
+                    kmwp_log('File save had errors', 'warning', array('errors' => $save_result['errors']));
+                }
+            } else {
+                kmwp_log('Auto-save disabled, skipping file save', 'info');
+            }
+            
+            // Mark as successful
+            $success = true;
+            
+            // Update success log
+            $log_entry = array(
+                'event' => 'cron_completed',
+                'user_id' => $user_id,
+                'website_url' => $website_url,
+                'output_type' => $output_type,
+                'timestamp' => current_time('mysql'),
+                'status' => 'success',
+                'auto_saved' => $auto_save
+            );
+            update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
+            
+            // Clear failure tracking on success
+            delete_option('kmwp_cron_failures_' . $user_id);
+            
+            kmwp_log_cron_event('cron_completed', $user_id, array('status' => 'success'));
+            
+        } catch (Exception $e) {
+            $retry_count++;
+            $error_message = $e->getMessage();
+            
+            kmwp_log(
+                'Cron operation failed',
+                'error',
+                array(
+                    'user_id' => $user_id,
+                    'attempt' => $retry_count,
+                    'max_retries' => $max_retries,
+                    'error' => $error_message
+                )
+            );
+            
+            if ($retry_count >= $max_retries) {
+                // All retries exhausted
+                $log_entry = array(
+                    'event' => 'cron_failed',
+                    'user_id' => $user_id,
+                    'website_url' => $website_url,
+                    'output_type' => $output_type,
+                    'timestamp' => current_time('mysql'),
+                    'status' => 'failed',
+                    'error' => $error_message,
+                    'retries' => $retry_count
+                );
+                update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
+                
+                // Track failure
+                kmwp_track_cron_failure($user_id, $error_message);
+                
+                kmwp_log_cron_event('cron_failed', $user_id, array('error' => $error_message, 'retries' => $retry_count));
+            }
+        }
+    }
+    
+    // Use spawn_cron for long-running tasks to avoid blocking
+    if (function_exists('spawn_cron')) {
+        spawn_cron();
     }
 });

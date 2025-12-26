@@ -111,6 +111,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const mainWrapper = document.querySelector('.main-wrapper');
     const thankYouSection = document.getElementById('thankYouSection');
     
+    // Schedule Settings Elements
+    const scheduleSettingsBtn = document.getElementById('scheduleSettingsBtn');
+    const scheduleSettingsModal = document.getElementById('scheduleSettingsModal');
+    const closeScheduleModalBtn = document.getElementById('closeScheduleModalBtn');
+    const scheduleForm = document.getElementById('scheduleForm');
+    const enableScheduleCheckbox = document.getElementById('enableScheduleCheckbox');
+    const frequencySection = document.getElementById('frequencySection');
+    const frequencyRadios = document.querySelectorAll('input[name="schedule_frequency"]');
+    const weeklyDaySection = document.getElementById('weeklyDaySection');
+    const monthlyDateSection = document.getElementById('monthlyDateSection');
+    const monthlyDateGrid = document.getElementById('monthlyDateGrid');
+    const dayOfMonthInput = document.getElementById('dayOfMonthInput');
+    const scheduleStatusMessage = document.getElementById('scheduleStatusMessage');
+    const nextRunTimeDisplay = document.getElementById('nextRunTimeDisplay');
+    const nextRunTimeText = document.getElementById('nextRunTimeText');
+    const scheduleStatusInfo = document.getElementById('scheduleStatusInfo');
+    const scheduleStatusText = document.getElementById('scheduleStatusText');
+    const dayOfWeekSelect = document.getElementById('dayOfWeekSelect');
+    const saveScheduleBtn = document.getElementById('saveScheduleBtn');
+    const cancelScheduleBtn = document.getElementById('cancelScheduleBtn');
+    const monthlyDateModal = document.getElementById('monthlyDateModal');
+    const closeDateModalBtn = document.getElementById('closeDateModalBtn');
+    const cancelDateModalBtn = document.getElementById('cancelDateModalBtn');
+    const saveDateModalBtn = document.getElementById('saveDateModalBtn');
+    const monthlyDatePreview = document.getElementById('monthlyDatePreview');
+    const previewDateText = document.getElementById('previewDateText');
+    const editDateBtn = document.getElementById('editDateBtn');
+    const weeklyDayPreview = document.getElementById('weeklyDayPreview');
+    const weeklyPreviewText = document.getElementById('weeklyPreviewText');
+    
     let isSaving = false; // Prevent duplicate saves
     let isDeleting = false; // Prevent duplicate deletes
     let currentDeleteId = null; // Store ID for delete confirmation
@@ -521,26 +551,19 @@ document.addEventListener('DOMContentLoaded', () => {
         // Calculate file sizes
         let stats = [];
         
-        if (selectedOutputType === 'llms_both') {
-            // For both, show both file sizes
-            const summContent = currentSummarizedContent || '';
-            const fullContent = currentFullContent || '';
-            
-            const summSize = Math.max(1, Math.round(new Blob([summContent]).size / 1024));
-            const fullSize = Math.max(1, Math.round(new Blob([fullContent]).size / 1024));
-            
+        if (selectedOutputType === 'llms_both' && currentSummarizedContent && currentFullContent) {
+            const summSize = Math.round(new Blob([currentSummarizedContent]).size / 1024);
+            const fullSize = Math.round(new Blob([currentFullContent]).size / 1024);
             stats.push(`<strong>llm.txt:</strong> ${summSize}KB`);
             stats.push(`<strong>llm-full.txt:</strong> ${fullSize}KB`);
-        } else if (selectedOutputType === 'llms_txt') {
-            const content = currentSummarizedContent || currentOutputContent || '';
-            const size = Math.max(1, Math.round(new Blob([content]).size / 1024));
+        } else if (selectedOutputType === 'llms_txt' && currentSummarizedContent) {
+            const size = Math.round(new Blob([currentSummarizedContent]).size / 1024);
             stats.push(`<strong>llm.txt:</strong> ${size}KB`);
-        } else if (selectedOutputType === 'llms_full_txt') {
-            const content = currentFullContent || currentOutputContent || '';
-            const size = Math.max(1, Math.round(new Blob([content]).size / 1024));
+        } else if (selectedOutputType === 'llms_full_txt' && currentFullContent) {
+            const size = Math.round(new Blob([currentFullContent]).size / 1024);
             stats.push(`<strong>llm-full.txt:</strong> ${size}KB`);
         } else if (currentOutputContent) {
-            const size = Math.max(1, Math.round(new Blob([currentOutputContent]).size / 1024));
+            const size = Math.round(new Blob([currentOutputContent]).size / 1024);
             stats.push(`<strong>Total:</strong> ${size}KB`);
         }
         
@@ -2444,7 +2467,480 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Initialize email verification on page load
+    
+    /* ========================
+       SCHEDULE SETTINGS FUNCTIONS
+    ========================*/
+    
+    async function openScheduleModal() {
+        if (scheduleSettingsModal) {
+            scheduleSettingsModal.classList.add('show');
+            scheduleSettingsModal.style.display = 'flex';
+            
+            // Load existing schedule settings
+            try {
+                const response = await apiFetch('kmwp_get_schedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success && data.data && data.data.schedule) {
+                        const schedule = data.data.schedule;
+                        
+                        // Populate form fields
+                        enableScheduleCheckbox.checked = schedule.enabled || false;
+                        if (schedule.frequency) {
+                            const freqRadio = document.querySelector(`input[name="schedule_frequency"][value="${schedule.frequency}"]`);
+                            if (freqRadio) freqRadio.checked = true;
+                        }
+                        if (schedule.day_of_week !== undefined && schedule.day_of_week !== null) {
+                            dayOfWeekSelect.value = schedule.day_of_week;
+                        }
+                        if (schedule.day_of_month !== undefined && schedule.day_of_month !== null) {
+                            dayOfMonthInput.value = schedule.day_of_month;
+                        }
+                        
+                        // Update UI display
+                        toggleFrequencyOptions();
+                        if (schedule.frequency) {
+                            updateFrequencyDisplay(schedule.frequency);
+                        }
+                        
+                        // Update previews if values are set
+                        if (schedule.frequency === 'weekly' && schedule.day_of_week !== undefined) {
+                            updateWeeklyPreview();
+                        }
+                        if (schedule.frequency === 'monthly' && schedule.day_of_month) {
+                            updateMonthlyPreview();
+                        }
+                        
+                        // Update next run time
+                        updateNextRunTime(schedule);
+                    }
+                }
+            } catch (err) {
+                console.error('Error loading schedule settings:', err);
+            }
+        }
+    }
+    
+    function closeScheduleModal() {
+        if (scheduleSettingsModal) {
+            scheduleSettingsModal.classList.remove('show');
+            scheduleSettingsModal.style.display = 'none';
+        }
+    }
+    
+    function toggleFrequencyOptions() {
+        const isEnabled = enableScheduleCheckbox.checked;
+        
+        if (isEnabled) {
+            frequencySection.style.display = 'block';
+            saveScheduleBtn.style.display = 'inline-block';
+            
+            // Show relevant option based on selected frequency
+            const selectedFrequency = document.querySelector('input[name="schedule_frequency"]:checked');
+            if (selectedFrequency) {
+                updateFrequencyDisplay(selectedFrequency.value);
+            }
+        } else {
+            frequencySection.style.display = 'none';
+            weeklyDaySection.style.display = 'none';
+            monthlyDateSection.style.display = 'none';
+            saveScheduleBtn.style.display = 'none';
+            nextRunTimeDisplay.style.display = 'none';
+        }
+    }
+    
+    function updateFrequencyDisplay(frequency) {
+        weeklyDaySection.style.display = 'none';
+        monthlyDateSection.style.display = 'none';
+        
+        if (frequency === 'weekly') {
+            weeklyDaySection.style.display = 'block';
+            updateWeeklyPreview();
+        } else if (frequency === 'monthly') {
+            // Immediately open the date selection modal
+            openDateModal();
+        }
+    }
+    
+    function updateWeeklyPreview() {
+        if (!dayOfWeekSelect || !dayOfWeekSelect.value) {
+            if (weeklyDayPreview) weeklyDayPreview.style.display = 'none';
+            return;
+        }
+        
+        const dayValue = parseInt(dayOfWeekSelect.value);
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const selectedDay = days[dayValue];
+        
+        if (selectedDay && weeklyPreviewText) {
+            weeklyPreviewText.textContent = `Files will be generated every ${selectedDay}`;
+            if (weeklyDayPreview) {
+                weeklyDayPreview.style.display = 'flex';
+            }
+        }
+    }
+    
+    function openDateModal() {
+        if (monthlyDateModal) {
+            monthlyDateModal.classList.add('show');
+            monthlyDateModal.style.display = 'flex';
+            generateCalendar();
+            
+            // If there's a saved date, select it
+            if (dayOfMonthInput && dayOfMonthInput.value) {
+                const savedDate = parseInt(dayOfMonthInput.value);
+                if (savedDate >= 1 && savedDate <= 31) {
+                    setTimeout(() => {
+                        const dateItem = monthlyDateGrid.querySelector(`[data-date="${savedDate}"]`);
+                        if (dateItem) {
+                            dateItem.click();
+                        }
+                    }, 100);
+                }
+            }
+        }
+    }
+    
+    function closeDateModal() {
+        if (monthlyDateModal) {
+            monthlyDateModal.classList.remove('show');
+            monthlyDateModal.style.display = 'none';
+        }
+    }
+    
+    function updateMonthlyPreview() {
+        if (!dayOfMonthInput || !dayOfMonthInput.value) {
+            if (monthlyDatePreview) monthlyDatePreview.style.display = 'none';
+            if (monthlyDateSection) monthlyDateSection.style.display = 'none';
+            return;
+        }
+        
+        const selectedDate = parseInt(dayOfMonthInput.value);
+        if (selectedDate >= 1 && selectedDate <= 31) {
+            // Format date with ordinal suffix - user-friendly message
+            const ordinal = getOrdinalSuffix(selectedDate);
+            if (previewDateText) {
+                previewDateText.textContent = `Files will be generated on the ${selectedDate}${ordinal} of every month`;
+            }
+            if (monthlyDatePreview) {
+                monthlyDatePreview.style.display = 'flex';
+            }
+            if (monthlyDateSection) {
+                monthlyDateSection.style.display = 'block';
+            }
+        }
+    }
+    
+    function getOrdinalSuffix(day) {
+        if (day >= 11 && day <= 13) {
+            return 'th';
+        }
+        switch (day % 10) {
+            case 1: return 'st';
+            case 2: return 'nd';
+            case 3: return 'rd';
+            default: return 'th';
+        }
+    }
+    
+    let selectedDateInModal = null;
+    
+    function generateCalendar() {
+        if (!monthlyDateGrid) return;
+        
+        // Clear existing grid
+        monthlyDateGrid.innerHTML = '';
+        selectedDateInModal = null;
+        
+        // Create grid items for 1-31
+        for (let i = 1; i <= 31; i++) {
+            const dateItem = document.createElement('div');
+            dateItem.className = 'monthly-date-item';
+            dateItem.textContent = i;
+            dateItem.setAttribute('data-date', i);
+            dateItem.addEventListener('click', function() {
+                // Remove selected class from all items
+                monthlyDateGrid.querySelectorAll('.monthly-date-item').forEach(item => {
+                    item.classList.remove('selected');
+                });
+                // Add selected class to clicked item
+                this.classList.add('selected');
+                // Store selected date
+                selectedDateInModal = i;
+                
+                // Enable save button
+                if (saveDateModalBtn) {
+                    saveDateModalBtn.disabled = false;
+                }
+            });
+            monthlyDateGrid.appendChild(dateItem);
+        }
+        
+        // If there's a saved value, select it
+        if (dayOfMonthInput && dayOfMonthInput.value) {
+            const savedDate = parseInt(dayOfMonthInput.value);
+            if (savedDate >= 1 && savedDate <= 31) {
+                const dateItem = monthlyDateGrid.querySelector(`[data-date="${savedDate}"]`);
+                if (dateItem) {
+                    dateItem.classList.add('selected');
+                    selectedDateInModal = savedDate;
+                }
+            }
+        }
+        
+        // Enable/disable save button based on selection
+        if (saveDateModalBtn) {
+            saveDateModalBtn.disabled = !selectedDateInModal;
+        }
+    }
+    
+    function saveSelectedDate() {
+        if (selectedDateInModal !== null && dayOfMonthInput) {
+            dayOfMonthInput.value = selectedDateInModal;
+            closeDateModal();
+            updateMonthlyPreview();
+        }
+    }
+    
+    function showScheduleStatusMessage(message, type = 'info') {
+        if (!scheduleStatusMessage) return;
+        
+        scheduleStatusMessage.textContent = message;
+        scheduleStatusMessage.className = `schedule-status-message ${type}`;
+        scheduleStatusMessage.style.display = 'flex';
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            scheduleStatusMessage.style.display = 'none';
+        }, 5000);
+    }
+    
+    function updateNextRunTime(schedule) {
+        if (!schedule || !schedule.enabled) {
+            if (nextRunTimeDisplay) nextRunTimeDisplay.style.display = 'none';
+            return;
+        }
+        
+        const frequency = schedule.frequency || 'daily';
+        let nextRun = '';
+        
+        if (frequency === 'daily') {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            nextRun = tomorrow.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } else if (frequency === 'weekly') {
+            const dayOfWeek = schedule.day_of_week || 0;
+            const today = new Date();
+            const currentDay = today.getDay();
+            let daysUntil = (dayOfWeek - currentDay + 7) % 7;
+            if (daysUntil === 0) daysUntil = 7; // Next week if today is the day
+            const nextDate = new Date(today);
+            nextDate.setDate(today.getDate() + daysUntil);
+            nextRun = nextDate.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric'
+            });
+        } else if (frequency === 'monthly') {
+            const dayOfMonth = schedule.day_of_month || 1;
+            const today = new Date();
+            const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+            const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0).getDate();
+            const targetDay = Math.min(dayOfMonth, lastDayOfMonth);
+            const nextDate = new Date(today.getFullYear(), today.getMonth() + 1, targetDay);
+            nextRun = nextDate.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric'
+            });
+        }
+        
+        if (nextRunTimeText) {
+            nextRunTimeText.textContent = nextRun;
+        }
+        if (nextRunTimeDisplay) {
+            nextRunTimeDisplay.style.display = 'block';
+        }
+    }
+    
+    // Schedule Settings Event Listeners
+    if (scheduleSettingsBtn) {
+        scheduleSettingsBtn.addEventListener('click', openScheduleModal);
+    }
+    
+    if (closeScheduleModalBtn) {
+        closeScheduleModalBtn.addEventListener('click', closeScheduleModal);
+    }
+    
+    if (cancelScheduleBtn) {
+        cancelScheduleBtn.addEventListener('click', closeScheduleModal);
+    }
+    
+    if (enableScheduleCheckbox) {
+        enableScheduleCheckbox.addEventListener('change', toggleFrequencyOptions);
+    }
+    
+    if (frequencyRadios.length > 0) {
+        frequencyRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                updateFrequencyDisplay(e.target.value);
+            });
+        });
+    }
+    
+    // Weekly day selector change listener
+    if (dayOfWeekSelect) {
+        dayOfWeekSelect.addEventListener('change', updateWeeklyPreview);
+    }
+    
+    if (saveScheduleBtn) {
+        saveScheduleBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            
+            const scheduleEnabled = enableScheduleCheckbox.checked;
+            const frequency = document.querySelector('input[name="schedule_frequency"]:checked')?.value || '';
+            const dayOfWeek = dayOfWeekSelect.value || '';
+            const dayOfMonth = dayOfMonthInput.value || '';
+            
+            if (scheduleEnabled && !frequency) {
+                alert('Please select a frequency');
+                return;
+            }
+            
+            if (frequency === 'weekly' && !dayOfWeek) {
+                alert('Please select a day for weekly scheduling');
+                return;
+            }
+            
+            if (frequency === 'monthly' && !dayOfMonth) {
+                alert('Please select a date for monthly scheduling');
+                return;
+            }
+            
+            // Save to database via AJAX
+            try {
+                const response = await apiFetch('kmwp_save_schedule', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        schedule_enabled: scheduleEnabled,
+                        schedule_frequency: frequency,
+                        schedule_day_of_week: dayOfWeek,
+                        schedule_day_of_month: dayOfMonth
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    const errorMessage = errorData?.data?.message || errorData?.message || 'Failed to save schedule. Please try again.';
+                    showScheduleStatusMessage('Error saving schedule: ' + errorMessage, 'warning');
+                    return;
+                }
+                
+                const data = await response.json();
+                if (data.success) {
+                    // Show confirmation message
+                    let message = '';
+                    if (!scheduleEnabled) {
+                        message = 'Cron scheduling has been disabled. You can still generate files manually.';
+                        showScheduleStatusMessage(message, 'info');
+                    } else {
+                        message = 'Schedule saved! These settings will apply to all future file generations.';
+                        showScheduleStatusMessage(message, 'success');
+                        // Update next run time
+                        if (data.data && data.data.schedule) {
+                            updateNextRunTime(data.data.schedule);
+                        }
+                    }
+                    
+                    // Close modal after a short delay
+                    setTimeout(() => {
+                        closeScheduleModal();
+                    }, 2000);
+                } else {
+                    const errorMessage = data?.data?.message || data?.message || 'Failed to save schedule. Please try again.';
+                    showScheduleStatusMessage('Error saving schedule: ' + errorMessage, 'warning');
+                }
+            } catch (err) {
+                console.error('Error saving schedule:', err);
+                alert('Error saving schedule settings');
+            }
+        });
+    }
+    
+    // Load and display schedule status on page load
+    async function loadScheduleStatus() {
+        try {
+            const response = await apiFetch('kmwp_get_schedule', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.data && data.data.schedule) {
+                    const schedule = data.data.schedule;
+                    if (schedule.enabled) {
+                        if (scheduleStatusInfo && scheduleStatusText) {
+                            scheduleStatusText.textContent = 'Schedule is enabled. Your next file generation will use these settings.';
+                            scheduleStatusInfo.style.display = 'flex';
+                        }
+                    } else {
+                        if (scheduleStatusInfo) {
+                            scheduleStatusInfo.style.display = 'none';
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Error loading schedule status:', err);
+        }
+    }
+    
+    // Date Modal Event Listeners
+    if (editDateBtn) {
+        editDateBtn.addEventListener('click', openDateModal);
+    }
+    
+    if (closeDateModalBtn) {
+        closeDateModalBtn.addEventListener('click', closeDateModal);
+    }
+    
+    if (cancelDateModalBtn) {
+        cancelDateModalBtn.addEventListener('click', closeDateModal);
+    }
+    
+    if (saveDateModalBtn) {
+        saveDateModalBtn.addEventListener('click', saveSelectedDate);
+    }
+    
+    // Close modal when clicking outside
+    if (monthlyDateModal) {
+        monthlyDateModal.addEventListener('click', function(e) {
+            if (e.target === monthlyDateModal) {
+                closeDateModal();
+            }
+        });
+    }
+    
+    // Initialize email verification and schedule status on page load
     initializeEmailVerification();
+    loadScheduleStatus();
 });
 

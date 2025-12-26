@@ -16,7 +16,10 @@
     <main class="main-wrapper">
         <section class="generator-card">
             <div class="toggle-group">
-                <label class="section-label">Choose Output Type:</label>
+                <div class="toggle-group-header">
+                    <label class="section-label">Choose Output Type:</label>
+                    <button type="button" id="scheduleSettingsBtn" class="schedule-settings-icon" aria-label="Schedule Settings" title="Schedule Settings">⚙️</button>
+                </div>
                 <div class="toggle-buttons">
                     <button class="toggle-btn" data-type="llms_txt">LLMs Txt (Summarized)</button>
                     <button class="toggle-btn" data-type="llms_full_txt">LLMs Full Txt (Full Content)</button>
@@ -30,6 +33,10 @@
             <div id="statusMessage" class="status-message">
                 <span id="statusMessageText"></span>
                 <button type="button" id="statusMessageClose" class="status-message-close" aria-label="Close" style="display: none;">×</button>
+            </div>
+            <!-- Schedule Status Message -->
+            <div id="scheduleStatusInfo" class="schedule-status-info" style="display: none;">
+                <span id="scheduleStatusText"></span>
             </div>
         </section>
         <!-- Success Card (Compact) -->
@@ -72,6 +79,120 @@
                                 <iframe id="outputIframeFullTxt" src="about:blank"></iframe>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Schedule Settings Modal -->
+        <div role="dialog" aria-modal="true" class="fade custom-modal modal" id="scheduleSettingsModal" style="display: none;" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Schedule Settings</h2>
+                        <button type="button" class="btn-close" id="closeScheduleModalBtn" aria-label="Close">×</button>
+                    </div>
+                    <div class="modal-body schedule-modal-body">
+                        <form id="scheduleForm">
+                            <!-- Enable Scheduling -->
+                            <div class="schedule-section">
+                                <label class="schedule-checkbox-label">
+                                    <input type="checkbox" id="enableScheduleCheckbox" name="schedule_enabled">
+                                    <span>Enable Auto-Scheduling</span>
+                                </label>
+                            </div>
+                            
+                            <!-- Frequency Selection -->
+                            <div class="schedule-section" id="frequencySection" style="display: none;">
+                                <label class="schedule-label">Schedule Frequency:</label>
+                                <div class="frequency-options">
+                                    <label class="frequency-radio">
+                                        <input type="radio" name="schedule_frequency" value="daily">
+                                        <span>Daily</span>
+                                    </label>
+                                    <label class="frequency-radio">
+                                        <input type="radio" name="schedule_frequency" value="weekly">
+                                        <span>Weekly</span>
+                                    </label>
+                                    <label class="frequency-radio">
+                                        <input type="radio" name="schedule_frequency" value="monthly">
+                                        <span>Monthly</span>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Weekly: Day Selector -->
+                            <div class="schedule-section" id="weeklyDaySection" style="display: none;">
+                                <label class="schedule-label">Select Day:</label>
+                                <select id="dayOfWeekSelect" name="schedule_day_of_week" class="schedule-select">
+                                    <option value="">Choose a day...</option>
+                                    <option value="0">Sunday</option>
+                                    <option value="1">Monday</option>
+                                    <option value="2">Tuesday</option>
+                                    <option value="3">Wednesday</option>
+                                    <option value="4">Thursday</option>
+                                    <option value="5">Friday</option>
+                                    <option value="6">Saturday</option>
+                                </select>
+                                
+                                <!-- Weekly Preview -->
+                                <div id="weeklyDayPreview" class="schedule-preview-message" style="display: none;">
+                                    <span class="preview-icon">📅</span>
+                                    <span class="preview-text" id="weeklyPreviewText"></span>
+                                </div>
+                            </div>
+                            
+                            <!-- Monthly: Preview Section (shown after date selection) -->
+                            <div class="schedule-section" id="monthlyDateSection" style="display: none;">
+                                <input type="hidden" id="dayOfMonthInput" name="schedule_day_of_month" value="">
+                                
+                                <!-- Preview Section -->
+                                <div id="monthlyDatePreview" class="schedule-preview-message" style="display: none;">
+                                    <span class="preview-icon">📅</span>
+                                    <span class="preview-text" id="previewDateText"></span>
+                                    <button type="button" class="btn-edit-date-small" id="editDateBtn" aria-label="Edit date" title="Change date">
+                                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <path d="M11.3333 2.00001C11.5084 1.82489 11.7163 1.68697 11.9439 1.59431C12.1715 1.50165 12.4142 1.45605 12.6588 1.46001C12.9034 1.46398 13.1446 1.51738 13.3686 1.61704C13.5926 1.7167 13.7947 1.86055 13.9627 2.04001C14.1307 2.21947 14.2611 2.43099 14.3468 2.66211C14.4325 2.89323 14.4716 3.13919 14.4613 3.38568C14.4511 3.63217 14.3917 3.87419 14.2867 4.09768C14.1817 4.32117 14.0331 4.52159 13.8487 4.68668L6.18133 12.3533L2.66667 13.3333L3.64667 9.81868L11.3133 2.15201L11.3333 2.00001Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Monthly Date Selection Modal -->
+                            <div role="dialog" aria-modal="true" class="fade custom-modal modal" id="monthlyDateModal" style="display: none;" tabindex="-1">
+                                <div class="modal-dialog modal-dialog-centered date-modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h2 class="modal-title">Select Date (1-31)</h2>
+                                            <button type="button" class="btn-close" id="closeDateModalBtn" aria-label="Close">×</button>
+                                        </div>
+                                        <div class="modal-body date-modal-body">
+                                            <p class="date-modal-help">Select a date. If the date doesn't exist in the target month, the cron will run on the last day of that month.</p>
+                                            <div class="calendar-grid-container">
+                                                <div id="monthlyDateGrid" class="monthly-date-grid"></div>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer date-modal-footer">
+                                            <button type="button" class="btn-cancel" id="cancelDateModalBtn">Cancel</button>
+                                            <button type="button" class="btn-save-date" id="saveDateModalBtn">Select Date</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Status Message Area -->
+                            <div id="scheduleStatusMessage" class="schedule-status-message" style="display: none;"></div>
+                            
+                            <!-- Next Run Time Display -->
+                            <div id="nextRunTimeDisplay" class="next-run-time" style="display: none;">
+                                <strong>Next scheduled run:</strong> <span id="nextRunTimeText"></span>
+                            </div>
+                            
+                            <!-- Action Buttons -->
+                            <div class="schedule-actions">
+                                <button type="button" id="saveScheduleBtn" class="btn save-schedule" style="display: none;">Save Settings</button>
+                                <button type="button" id="cancelScheduleBtn" class="btn cancel-schedule">Cancel</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>
