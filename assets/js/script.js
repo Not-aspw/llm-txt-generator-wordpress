@@ -84,9 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const confirmProceedBtn = document.getElementById('confirmProceedBtn');
     const confirmCancelBtn = document.getElementById('confirmCancelBtn');
     const confirmModalCloseBtn = document.getElementById('confirmModalCloseBtn');
-    const showHistoryBtn = document.getElementById('showHistoryBtn');
     const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
-    const closeHistoryBtn = document.getElementById('closeHistoryBtn');
     const successCard = document.getElementById('successCard');
     const outputPreviewModal = document.getElementById('outputPreviewModal');
     const closeOutputPreviewBtn = document.getElementById('closeOutputPreviewBtn');
@@ -1747,10 +1745,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 showSuccess(message);
 
-                // After first successful save in this session, ensure View History button is visible
-                if (showHistoryBtn) {
-                    showHistoryBtn.style.display = 'inline-block';
-                }
+                // After first successful save in this session, user can view in File History tab
+                // No need to show button - tabs are always visible
             }, 1000);
             
         } catch (err) {
@@ -2139,9 +2135,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function displayHistory(history, paginationData = {}) {
         const historyList = document.getElementById('historyList');
-        const historySection = document.getElementById('historySection');
+        const historyFilters = document.querySelector('.history-filters');
         
-        if (!historyList || !historySection) {
+        if (!historyList) {
             console.error('History elements not found');
             return;
         }
@@ -2150,7 +2146,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (history.length === 0) {
             historyList.innerHTML = '<p class="no-history">No history found.</p>';
+            // Hide filters when no history
+            if (historyFilters) {
+                historyFilters.style.display = 'none';
+            }
             return;
+        }
+        
+        // Show filters when there is history
+        if (historyFilters) {
+            historyFilters.style.display = 'flex';
         }
         
         historyList.innerHTML = history.map(item => {
@@ -2219,20 +2224,15 @@ document.addEventListener('DOMContentLoaded', () => {
         
         console.log('History HTML generated, length:', historyList.innerHTML.length);
         
-        // Use event delegation - attach listener to historySection (parent) to avoid duplicate listeners
-        // Remove any existing listener by using a single delegated listener
-        if (historySection) {
+        // Use event delegation - attach listener to historyContent to handle clicks
+        const historyContent = document.getElementById('fileHistoryContent');
+        if (historyContent) {
             // Remove old listener if exists, then add new one
-            historySection.removeEventListener('click', handleHistoryClick);
-            historySection.addEventListener('click', handleHistoryClick);
+            historyContent.removeEventListener('click', handleHistoryClick);
+            historyContent.addEventListener('click', handleHistoryClick);
         }
         
-        // Ensure history section is visible
-        if (historySection) {
-            historySection.style.display = 'block';
-        }
-        
-        console.log('History displayed, section visible:', historySection.style.display);
+        console.log('History displayed successfully');
     }
     
     function updatePaginationControls(paginationData) {
@@ -2575,47 +2575,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Show history button
-    if (showHistoryBtn) {
-        // Hide by default until we confirm there is history
-        showHistoryBtn.style.display = 'none';
-
-        showHistoryBtn.addEventListener('click', async () => {
-            const historySection = document.getElementById('historySection');
-            if (historySection) {
-                historySection.style.display = 'block';
-                
-                // Reset all filters to 'all' when opening history
-                currentFilters = {
-                    output_type: 'all',
-                    date_range: 'all',
-                    source: 'all'
-                };
-                
-                // Update dropdown values to match
-                const filterOutputType = document.getElementById('filterOutputType');
-                const filterDateRange = document.getElementById('filterDateRange');
-                const filterSource = document.getElementById('filterSource');
-                
-                if (filterOutputType) filterOutputType.value = 'all';
-                if (filterDateRange) filterDateRange.value = 'all';
-                if (filterSource) filterSource.value = 'all';
-                
-                // Load history when section is shown (always start at page 1)
-                await loadHistory(false, 1, currentFilters);
-            }
-        });
-    }
+    // History tab switching - showHistoryBtn removed, using tabs now
+    // History will be loaded when user clicks on File History tab
     
     // Close history button
-    if (closeHistoryBtn) {
-        closeHistoryBtn.addEventListener('click', () => {
-            const historySection = document.getElementById('historySection');
-            if (historySection) {
-                historySection.style.display = 'none';
-            }
-        });
-    }
+    // closeHistoryBtn removed - using tabs now
 
     // Refresh history button
     if (refreshHistoryBtn) {
@@ -2658,33 +2622,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Run initial history button visibility check on load
-    initializeHistoryButtonVisibility();
-    
-    // Initialize visibility of the View History button based on whether history exists
-    async function initializeHistoryButtonVisibility() {
-        if (!showHistoryBtn) return;
-        
-        try {
-            const response = await apiFetch('kmwp_has_history', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            
-            if (!response.ok) {
-                console.error('kmwp_has_history response not OK:', response.status);
-                showHistoryBtn.style.display = 'none';
-                return;
-            }
-            
-            const result = await response.json();
-            const hasHistory = result.success === true && result.data && result.data.has_history === true;
-            showHistoryBtn.style.display = hasHistory ? 'inline-block' : 'none';
-        } catch (err) {
-            console.error('Error checking history availability:', err);
-            showHistoryBtn.style.display = 'none';
-        }
-    }
+    // Run initial history check - no longer needed with tabs
     
     
     /* ========================
@@ -3336,5 +3274,300 @@ document.addEventListener('DOMContentLoaded', () => {
     loadScheduleStatus();
     // Initialize output type info message
     updateOutputTypeInfo(selectedOutputType || 'llms_both');
+    
+    // ========================
+    // TAB SWITCHING LOGIC
+    // ========================
+    const tabButtons = document.querySelectorAll('.tab-btn[data-tab]');
+    const tabContents = document.querySelectorAll('.tab-content[data-tab-content]');
+    
+    if (tabButtons.length > 0) {
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const tabName = this.getAttribute('data-tab');
+                
+                // Remove active class from all buttons
+                tabButtons.forEach(b => b.classList.remove('active'));
+                
+                // Remove active class from all contents
+                tabContents.forEach(content => content.classList.remove('active'));
+                
+                // Add active class to clicked button
+                this.classList.add('active');
+                
+                // Add active class to corresponding content
+                const activeContent = document.querySelector(`.tab-content[data-tab-content="${tabName}"]`);
+                if (activeContent) {
+                    activeContent.classList.add('active');
+                }
+                
+                // Load content if it's the history tab
+                if (tabName === 'file-history') {
+                    // Load history with default filters
+                    currentFilters = {
+                        output_type: 'all',
+                        date_range: 'all',
+                        source: 'all'
+                    };
+                    if (typeof loadHistory === 'function') {
+                        loadHistory(false, 1, currentFilters);
+                    }
+                }
+                // Cron status will load automatically on init
+            });
+        });
+    }
+    
+    // ========================
+    // CRON STATUS MANAGEMENT
+    // ========================
+    class CronStatusManager {
+        constructor() {
+            this.refreshInterval = null;
+            this.statusEndpoint = 'kmwp_get_cron_status';
+            this.pauseEndpoint = 'kmwp_pause_cron';
+            this.resumeEndpoint = 'kmwp_resume_cron';
+            this.deleteEndpoint = 'kmwp_delete_cron';
+        }
+
+        init() {
+            this.attachEventListeners();
+            this.loadCronStatus();
+            this.startAutoRefresh();
+        }
+
+        attachEventListeners() {
+            const refreshBtn = document.getElementById('refreshCronStatusBtn');
+            const pauseBtn = document.getElementById('pauseCronBtn');
+            const resumeBtn = document.getElementById('resumeCronBtn');
+            const deleteBtn = document.getElementById('deleteCronBtn');
+            const refreshManualBtn = document.getElementById('refreshCronManualBtn');
+            const closeMsg = document.querySelector('.cron-action-message-close');
+
+            if (refreshBtn) refreshBtn.addEventListener('click', () => this.loadCronStatus());
+            if (pauseBtn) pauseBtn.addEventListener('click', () => this.pauseCron());
+            if (resumeBtn) resumeBtn.addEventListener('click', () => this.resumeCron());
+            if (deleteBtn) deleteBtn.addEventListener('click', () => this.deleteCron());
+            if (refreshManualBtn) refreshManualBtn.addEventListener('click', () => this.loadCronStatus());
+            if (closeMsg) closeMsg.addEventListener('click', () => {
+                const msgEl = document.getElementById('cronActionMessage');
+                if (msgEl) msgEl.style.display = 'none';
+            });
+        }
+
+        loadCronStatus() {
+            const btn = document.getElementById('refreshCronStatusBtn');
+            if (btn) btn.classList.add('spinning');
+
+            apiFetch(this.statusEndpoint, {
+                method: 'POST'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (btn) btn.classList.remove('spinning');
+                if (data.success) {
+                    this.updateUI(data.data);
+                } else {
+                    this.showError(data.data?.message || 'Failed to load cron status');
+                }
+            })
+            .catch(err => {
+                if (btn) btn.classList.remove('spinning');
+                console.error('Cron status error:', err);
+            });
+        }
+
+        updateUI(statusData) {
+            const {
+                status = 'idle',
+                is_paused = false,
+                next_run = null,
+                last_run = null,
+                last_run_status = null,
+                last_run_duration = 0,
+                schedule_frequency = '—',
+                output_type = '—',
+                website_url = '—',
+                recent_runs = []
+            } = statusData;
+
+            // Update status indicator
+            const statusDot = document.getElementById('cronStatusDot');
+            const statusLabel = document.getElementById('cronStatusLabel');
+            const statusDetail = document.getElementById('cronStatusDetail');
+
+            if (statusDot) {
+                statusDot.className = `status-dot ${status}`;
+            }
+            
+            const statusTexts = {
+                'idle': 'Automation Disabled',
+                'running': 'Automation Running',
+                'paused': 'Automation Paused',
+                'scheduled': 'Scheduled'
+            };
+            
+            if (statusLabel) statusLabel.textContent = statusTexts[status] || 'Unknown';
+            if (statusDetail) statusDetail.textContent = is_paused ? '(Temporarily paused)' : '';
+
+            // Update timing info
+            const lastRunEl = document.getElementById('lastRunTime');
+            const nextRunEl = document.getElementById('nextRunTime');
+            const durationEl = document.getElementById('lastRunDuration');
+            const frequencyEl = document.getElementById('cronFrequency');
+            const outputTypeEl = document.getElementById('cronOutputType');
+            const websiteUrlEl = document.getElementById('cronWebsiteUrl');
+
+            if (lastRunEl) lastRunEl.textContent = last_run ? this.formatTime(last_run) : 'Never';
+            if (nextRunEl) nextRunEl.textContent = next_run ? this.formatDateTime(next_run) : 'Not scheduled';
+            if (durationEl) durationEl.textContent = last_run_duration ? `${last_run_duration}s` : '—';
+            if (frequencyEl) frequencyEl.textContent = schedule_frequency;
+            if (outputTypeEl) outputTypeEl.textContent = output_type;
+            if (websiteUrlEl) websiteUrlEl.textContent = website_url;
+
+            // Update recent runs
+            this.updateRecentRuns(recent_runs);
+
+            // Update buttons visibility
+            const pauseBtn = document.getElementById('pauseCronBtn');
+            const resumeBtn = document.getElementById('resumeCronBtn');
+
+            // Show pause button if cron is scheduled and NOT paused
+            if (status === 'idle' || is_paused) {
+                if (pauseBtn) pauseBtn.style.display = 'none';
+                if (resumeBtn) resumeBtn.style.display = status !== 'idle' ? 'inline-flex' : 'none';
+            } else if (status === 'scheduled') {
+                // Show pause when scheduled and not paused
+                if (pauseBtn) pauseBtn.style.display = 'inline-flex';
+                if (resumeBtn) resumeBtn.style.display = 'none';
+            } else {
+                // Default: show pause if there's a next run
+                if (pauseBtn) pauseBtn.style.display = next_run ? 'inline-flex' : 'none';
+                if (resumeBtn) resumeBtn.style.display = 'none';
+            }
+        }
+
+        updateRecentRuns(recentRuns) {
+            const listEl = document.getElementById('recentRunsList');
+            if (!listEl) return;
+
+            if (!recentRuns || recentRuns.length === 0) {
+                listEl.innerHTML = '<div class="recent-run-item"><span class="recent-run-text">No recent executions</span></div>';
+                return;
+            }
+
+            listEl.innerHTML = recentRuns.map(run => `
+                <div class="recent-run-item">
+                    <span class="recent-run-status ${run.status}"></span>
+                    <span class="recent-run-text">${run.status === 'success' ? '✓' : '✗'} ${run.message || 'Execution'}</span>
+                    <span class="recent-run-timestamp">${this.formatTime(run.timestamp)}</span>
+                    ${run.duration ? `<span class="recent-run-duration">${run.duration}s</span>` : ''}
+                </div>
+            `).join('');
+        }
+
+        pauseCron() {
+            if (!confirm('Pause automation? You can resume it anytime.')) return;
+            this.sendAction(this.pauseEndpoint, 'Automation paused');
+        }
+
+        resumeCron() {
+            this.sendAction(this.resumeEndpoint, 'Automation resumed');
+        }
+
+        deleteCron() {
+            if (!confirm('Delete automation? This cannot be undone. You\'ll need to reconfigure from scratch.')) return;
+            this.sendAction(this.deleteEndpoint, 'Automation deleted', true);
+        }
+
+        sendAction(action, successMsg, reload = false) {
+            apiFetch(action, {
+                method: 'POST'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    this.showSuccess(successMsg);
+                    setTimeout(() => {
+                        if (reload) {
+                            location.reload();
+                        } else {
+                            this.loadCronStatus();
+                        }
+                    }, 500);
+                } else {
+                    this.showError(data.data?.message || 'Action failed');
+                }
+            })
+            .catch(err => {
+                console.error('Action error:', err);
+                this.showError('An error occurred');
+            });
+        }
+
+        formatTime(dateString) {
+            if (!dateString) return '—';
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffSecs = Math.floor(diffMs / 1000);
+            const diffMins = Math.floor(diffSecs / 60);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+
+            if (diffMins < 1) return 'just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            if (diffHours < 24) return `${diffHours}h ago`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            
+            return date.toLocaleDateString();
+        }
+
+        formatDateTime(dateString) {
+            if (!dateString) return '—';
+            const date = new Date(dateString);
+            return date.toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        showSuccess(msg) {
+            const msgEl = document.getElementById('cronActionMessage');
+            if (msgEl) {
+                msgEl.style.display = 'flex';
+                document.getElementById('cronActionMessageText').textContent = '✓ ' + msg;
+                msgEl.classList.remove('error');
+                msgEl.classList.add('success');
+            }
+        }
+
+        showError(msg) {
+            const msgEl = document.getElementById('cronActionMessage');
+            if (msgEl) {
+                msgEl.style.display = 'flex';
+                document.getElementById('cronActionMessageText').textContent = '✗ ' + msg;
+                msgEl.classList.remove('success');
+                msgEl.classList.add('error');
+            }
+        }
+
+        startAutoRefresh() {
+            // Refresh every 30 seconds when cron is active
+            this.refreshInterval = setInterval(() => {
+                const statusDot = document.getElementById('cronStatusDot');
+                if (statusDot && (statusDot.classList.contains('running') || statusDot.classList.contains('scheduled'))) {
+                    this.loadCronStatus();
+                }
+            }, 30000);
+        }
+    }
+
+    // Initialize Cron Status Manager
+    const cronManager = new CronStatusManager();
+    cronManager.init();
 });
 

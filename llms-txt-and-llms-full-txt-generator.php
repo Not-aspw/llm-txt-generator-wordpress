@@ -124,7 +124,9 @@ function kmwp_uninstall_cleanup() {
     
     global $wpdb;
     $table_name = $wpdb->prefix . 'kmwp_file_history';
+    $cron_log_table = $wpdb->prefix . 'kmwp_cron_log';
     $wpdb->query("DROP TABLE IF EXISTS $table_name");
+    $wpdb->query("DROP TABLE IF EXISTS $cron_log_table");
 }
 
 function kmwp_create_history_table() {
@@ -152,6 +154,23 @@ function kmwp_create_history_table() {
     
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql);
+    
+    // Create cron log table
+    $cron_log_table = $wpdb->prefix . 'kmwp_cron_log';
+    $cron_sql = "CREATE TABLE $cron_log_table (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        user_id bigint(20) unsigned NOT NULL,
+        status varchar(50) NOT NULL,
+        timestamp datetime DEFAULT CURRENT_TIMESTAMP,
+        duration int(11) DEFAULT 0,
+        error_message longtext,
+        PRIMARY KEY (id),
+        KEY user_id (user_id),
+        KEY timestamp (timestamp),
+        KEY status (status)
+    ) $charset_collate;";
+    
+    dbDelta($cron_sql);
 }
 
 // Create table on plugin load if it doesn't exist
@@ -1839,6 +1858,12 @@ add_action('kmwp_auto_generate_cron', function ($user_id) {
         return;
     }
     
+    // Check if cron is paused
+    if (get_option('kmwp_cron_paused_' . $user_id, false)) {
+        kmwp_log('Cron is paused, skipping execution', 'info', array('user_id' => $user_id));
+        return;
+    }
+    
     // Check if it's the right time to run
     if (!kmwp_should_run_scheduled_cron($schedule_data)) {
         kmwp_log('Not the scheduled time, skipping', 'info', array('user_id' => $user_id, 'schedule' => $schedule_data));
@@ -1891,6 +1916,7 @@ add_action('kmwp_auto_generate_cron', function ($user_id) {
     $retry_count = 0;
     $success = false;
     $error_message = '';
+    $start_time = time();
     
     while ($retry_count < $max_retries && !$success) {
         try {
@@ -2040,7 +2066,10 @@ add_action('kmwp_auto_generate_cron', function ($user_id) {
                 'status' => 'success',
                 'auto_saved' => $auto_save
             );
-    update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
+            update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
+            
+            // Log to cron execution table
+            kmwp_log_cron_execution($user_id, 'success', time() - $start_time, '');
             
             // Clear failure tracking on success
             delete_option('kmwp_cron_failures_' . $user_id);
@@ -2076,6 +2105,9 @@ add_action('kmwp_auto_generate_cron', function ($user_id) {
                 );
                 update_option('kmwp_last_cron_run_' . $user_id, $log_entry);
                 
+                // Log to cron execution table
+                kmwp_log_cron_execution($user_id, 'failed', time() - $start_time, $error_message);
+                
                 // Track failure
                 kmwp_track_cron_failure($user_id, $error_message);
                 
@@ -2089,3 +2121,234 @@ add_action('kmwp_auto_generate_cron', function ($user_id) {
         spawn_cron();
     }
 });
+
+/* ========================
+   CRON STATUS AJAX HANDLERS
+========================*/
+
+/**
+ * Get Cron Status
+ * Returns current cron status, next run time, last run info, etc.
+ */
+add_action('wp_ajax_kmwp_get_cron_status', function() {
+    kmwp_verify_ajax();
+    
+    $user_id = get_current_user_id();
+    $status_data = kmwp_get_cron_status($user_id);
+    
+    wp_send_json_success($status_data);
+});
+
+/**
+ * Pause Cron
+ * Temporarily pause the scheduled automation without removing schedule
+ */
+add_action('wp_ajax_kmwp_pause_cron', function() {
+    kmwp_verify_ajax();
+    
+    $user_id = get_current_user_id();
+    kmwp_pause_cron($user_id);
+    
+    kmwp_log('Cron paused by user', 'info', ['user_id' => $user_id]);
+    wp_send_json_success(['message' => 'Cron paused']);
+});
+
+/**
+ * Resume Cron
+ * Resume a previously paused automation
+ */
+add_action('wp_ajax_kmwp_resume_cron', function() {
+    kmwp_verify_ajax();
+    
+    $user_id = get_current_user_id();
+    kmwp_resume_cron($user_id);
+    
+    kmwp_log('Cron resumed by user', 'info', ['user_id' => $user_id]);
+    wp_send_json_success(['message' => 'Cron resumed']);
+});
+
+/**
+ * Delete/Cancel Cron
+ * Remove the scheduled automation entirely
+ */
+add_action('wp_ajax_kmwp_delete_cron', function() {
+    kmwp_verify_ajax();
+    
+    $user_id = get_current_user_id();
+    
+    // Clear the scheduled hook
+    wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
+    
+    // Delete all cron-related options
+    delete_option('kmwp_schedule_' . $user_id);
+    delete_option('kmwp_last_generation_' . $user_id);
+    delete_option('kmwp_cron_status_' . $user_id);
+    delete_option('kmwp_cron_paused_' . $user_id);
+    delete_option('kmwp_last_cron_run_' . $user_id);
+    
+    kmwp_log('Cron deleted by user', 'info', ['user_id' => $user_id]);
+    wp_send_json_success(['message' => 'Cron deleted']);
+});
+
+/* ========================
+   CRON STATUS HELPER FUNCTIONS
+========================*/
+
+/**
+ * Get formatted cron status for UI display
+ * 
+ * @param int $user_id User ID
+ * @return array Cron status data
+ */
+function kmwp_get_cron_status($user_id) {
+    $next_timestamp = wp_next_scheduled('kmwp_auto_generate_cron', array($user_id));
+    $schedule_option = get_option('kmwp_schedule_' . $user_id);
+    $is_paused = get_option('kmwp_cron_paused_' . $user_id, false);
+    $last_run = get_option('kmwp_last_cron_run_' . $user_id, array());
+    
+    // Determine status
+    if (!$next_timestamp) {
+        $status = 'idle';
+    } elseif ($is_paused) {
+        $status = 'paused';
+    } else {
+        $status = 'scheduled';
+    }
+    
+    // Format schedule frequency
+    $frequency_map = array(
+        'every_minute' => 'Every 1 Minute',
+        'daily' => 'Daily',
+        'weekly' => 'Weekly',
+        'monthly' => 'Monthly'
+    );
+    
+    $frequency = isset($schedule_option['frequency']) 
+        ? $frequency_map[$schedule_option['frequency']] ?? $schedule_option['frequency']
+        : '—';
+    
+    // Format output type
+    $output_type_map = array(
+        'llms_txt' => 'LLM.txt (Summarized)',
+        'llms_full_txt' => 'LLM-Full.txt (Full)',
+        'llms_both' => 'Both (LLM.txt & LLM-Full.txt)'
+    );
+    
+    $output_type = isset($schedule_option['output_type']) 
+        ? $output_type_map[$schedule_option['output_type']] ?? $schedule_option['output_type']
+        : '—';
+    
+    // Get website URL
+    $website_url = isset($schedule_option['website_url']) 
+        ? esc_url($schedule_option['website_url'])
+        : '—';
+    
+    // Get recent runs (last 5)
+    $recent_runs = kmwp_get_recent_cron_runs($user_id, 5);
+    
+    return array(
+        'status' => $status,
+        'is_paused' => (bool)$is_paused,
+        'next_run' => $next_timestamp ? date('Y-m-d H:i:s', $next_timestamp) : null,
+        'last_run' => isset($last_run['timestamp']) ? $last_run['timestamp'] : null,
+        'last_run_status' => isset($last_run['status']) ? $last_run['status'] : null,
+        'last_run_duration' => isset($last_run['duration']) ? intval($last_run['duration']) : 0,
+        'schedule_frequency' => $frequency,
+        'output_type' => $output_type,
+        'website_url' => $website_url,
+        'recent_runs' => $recent_runs
+    );
+}
+
+/**
+ * Get recent cron execution runs
+ * 
+ * @param int $user_id User ID
+ * @param int $limit Number of recent runs to return
+ * @return array Recent cron runs
+ */
+function kmwp_get_recent_cron_runs($user_id, $limit = 5) {
+    global $wpdb;
+    
+    $table_name = $wpdb->prefix . 'kmwp_cron_log';
+    
+    // Check if table exists
+    if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
+        return array();
+    }
+    
+    $runs = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT status, timestamp, duration 
+             FROM $table_name 
+             WHERE user_id = %d 
+             ORDER BY timestamp DESC 
+             LIMIT %d",
+            $user_id,
+            $limit
+        ),
+        ARRAY_A
+    );
+    
+    if (empty($runs)) {
+        return array();
+    }
+    
+    return array_map(function($run) {
+        return array(
+            'status' => $run['status'] === 'success' ? 'success' : 'failed',
+            'message' => $run['status'] === 'success' ? 'Files generated' : 'Failed to generate',
+            'timestamp' => $run['timestamp'],
+            'duration' => intval($run['duration'])
+        );
+    }, $runs);
+}
+
+/**
+ * Pause cron without removing schedule
+ * 
+ * @param int $user_id User ID
+ */
+function kmwp_pause_cron($user_id) {
+    update_option('kmwp_cron_paused_' . $user_id, true);
+}
+
+/**
+ * Resume paused cron
+ * 
+ * @param int $user_id User ID
+ */
+function kmwp_resume_cron($user_id) {
+    delete_option('kmwp_cron_paused_' . $user_id);
+}
+
+/**
+ * Log cron execution to database
+ * 
+ * @param int $user_id User ID
+ * @param string $status Status (success, failed)
+ * @param int $duration Duration in seconds
+ * @param string $error_message Error message if failed
+ */
+function kmwp_log_cron_execution($user_id, $status = 'success', $duration = 0, $error_message = '') {
+    global $wpdb;
+    
+    $table_name = $wpdb->prefix . 'kmwp_cron_log';
+    
+    // Check if table exists
+    if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
+        return;
+    }
+    
+    $wpdb->insert(
+        $table_name,
+        array(
+            'user_id' => $user_id,
+            'status' => $status,
+            'timestamp' => current_time('mysql'),
+            'duration' => $duration,
+            'error_message' => $error_message
+        ),
+        array('%d', '%s', '%s', '%d', '%s')
+    );
+}

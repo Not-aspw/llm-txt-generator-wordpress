@@ -43,7 +43,18 @@
             </div>
             <div class="input-row">
                 <button id="generateBtn" class="btn generate">Generate Files</button>
-                <button id="showHistoryBtn" class="btn history">View History</button>
+            </div>
+            
+            <!-- Tab Navigation -->
+            <div class="tab-navigation">
+                <button class="tab-btn active" data-tab="automation-status" id="automationStatusTab">
+                    <span class="tab-icon">⚙️</span>
+                    <span class="tab-label">Automation Status</span>
+                </button>
+                <button class="tab-btn" data-tab="file-history" id="fileHistoryTab">
+                    <span class="tab-icon">📋</span>
+                    <span class="tab-label">File History</span>
+                </button>
             </div>
             <div id="statusMessage" class="status-message">
                 <span id="statusMessageText"></span>
@@ -53,6 +64,140 @@
             <div id="scheduleStatusInfo" class="schedule-status-info" style="display: none;">
                 <span id="scheduleStatusText"></span>
                 <button type="button" class="schedule-status-info-close" id="closeScheduleStatusInfoBtn" aria-label="Close">×</button>
+            </div>
+            
+            <!-- Tabs Content Area -->
+            <div class="tabs-content-wrapper">
+                <!-- Automation Status Tab Content -->
+                <div class="tab-content active" data-tab-content="automation-status" id="automationStatusContent">
+                    <div class="cron-status-container">
+                        <!-- Status Card -->
+                        <div class="status-card">
+                            <div class="status-indicator">
+                                <span class="status-dot" id="cronStatusDot"></span>
+                                <div class="status-info">
+                                    <span class="status-label" id="cronStatusLabel">Automation Disabled</span>
+                                    <span class="status-detail" id="cronStatusDetail"></span>
+                                </div>
+                            </div>
+                            <button type="button" class="cron-refresh-btn" id="refreshCronStatusBtn" title="Refresh status">🔄</button>
+                        </div>
+
+                        <!-- Timing Information -->
+                        <div class="cron-timing-info">
+                            <div class="timing-item">
+                                <span class="timing-label">Last Run:</span>
+                                <span class="timing-value" id="lastRunTime">Never</span>
+                            </div>
+                            <div class="timing-item">
+                                <span class="timing-label">Next Run:</span>
+                                <span class="timing-value" id="nextRunTime">Not scheduled</span>
+                            </div>
+                            <div class="timing-item">
+                                <span class="timing-label">Duration:</span>
+                                <span class="timing-value" id="lastRunDuration">—</span>
+                            </div>
+                            <div class="timing-item">
+                                <span class="timing-label">Frequency:</span>
+                                <span class="timing-value" id="cronFrequency">—</span>
+                            </div>
+                            <div class="timing-item">
+                                <span class="timing-label">Output Type:</span>
+                                <span class="timing-value" id="cronOutputType">—</span>
+                            </div>
+                            <div class="timing-item">
+                                <span class="timing-label">Website:</span>
+                                <span class="timing-value" id="cronWebsiteUrl">—</span>
+                            </div>
+                        </div>
+
+                        <!-- Recent Runs -->
+                        <div class="recent-runs-section">
+                            <h4 class="recent-runs-title">Recent Executions</h4>
+                            <div class="recent-runs-list" id="recentRunsList">
+                                <div class="recent-run-item">
+                                    <span class="recent-run-status">—</span>
+                                    <span class="recent-run-text">No recent executions</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="cron-actions">
+                            <button type="button" class="btn btn-secondary" id="pauseCronBtn">
+                                ⏸ Pause Automation
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="resumeCronBtn" style="display: none;">
+                                ▶ Resume Automation
+                            </button>
+                            <button type="button" class="btn btn-danger" id="deleteCronBtn">
+                                🗑️ Delete Schedule
+                            </button>
+                            <button type="button" class="btn btn-info" id="refreshCronManualBtn">
+                                🔄 Refresh Now
+                            </button>
+                        </div>
+
+                        <!-- Status Message -->
+                        <div id="cronActionMessage" class="cron-action-message" style="display: none;">
+                            <span id="cronActionMessageText"></span>
+                            <button type="button" class="cron-action-message-close" aria-label="Close">×</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File History Tab Content -->
+                <div class="tab-content" data-tab-content="file-history" id="fileHistoryContent">
+                    <div class="history-header">
+                        <h3>File History</h3>
+                        <div class="history-header-actions">
+                            <button id="refreshHistoryBtn" class="btn refresh">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="historyLoader" class="history-loader" style="display: none;">
+                        <div class="history-spinner"></div>
+                    </div>
+                    <!-- Filter Controls -->
+                    <div class="history-filters">
+                        <div class="filter-group">
+                            <label for="filterOutputType" class="filter-label">Output Type</label>
+                            <select id="filterOutputType" class="filter-select">
+                                <option value="all">All Types</option>
+                                <option value="llms_txt">Summarized (llm.txt)</option>
+                                <option value="llms_full_txt">Full (llm-full.txt)</option>
+                                <option value="llms_both">Both (llm.txt & llm-full.txt)</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="filterDateRange" class="filter-label">Date Range</label>
+                            <select id="filterDateRange" class="filter-select">
+                                <option value="all">All Time</option>
+                                <option value="today">Today</option>
+                                <option value="7days">Last 7 Days</option>
+                                <option value="30days">Last 30 Days</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="filterSource" class="filter-label">Source</label>
+                            <select id="filterSource" class="filter-select">
+                                <option value="all">All Sources</option>
+                                <option value="auto">Auto</option>
+                                <option value="manual">Manual</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="historyList" class="history-list">
+                        <!-- History items will be loaded here -->
+                    </div>
+                    <!-- Pagination Controls -->
+                    <div id="historyPagination" class="history-pagination" style="display: none;">
+                        <button id="historyPrevBtn" class="btn-pagination prev" disabled>Previous</button>
+                        <div class="pagination-info">
+                            <span id="paginationText">Page 1 of 1</span>
+                        </div>
+                        <button id="historyNextBtn" class="btn-pagination next">Next</button>
+                    </div>
+                </div>
             </div>
         </section>
         <!-- Success Card (Compact) -->
@@ -218,58 +363,7 @@
                 </div>
             </div>
         </div>
-        <section class="generator-card" id="historySection" style="display: none;">
-            <div class="history-header">
-                <h2>File History</h2>
-                <div class="history-header-actions">
-                    <button id="refreshHistoryBtn" class="btn refresh">Refresh</button>
-                    <button id="closeHistoryBtn" class="btn-close-history" aria-label="Close">×</button>
-                </div>
-            </div>
-            <div id="historyLoader" class="history-loader" style="display: none;">
-                <div class="history-spinner"></div>
-            </div>
-            <!-- Filter Controls -->
-            <div class="history-filters">
-                <div class="filter-group">
-                    <label for="filterOutputType" class="filter-label">Output Type</label>
-                    <select id="filterOutputType" class="filter-select">
-                        <option value="all">All Types</option>
-                        <option value="llms_txt">Summarized (llm.txt)</option>
-                        <option value="llms_full_txt">Full (llm-full.txt)</option>
-                        <option value="llms_both">Both (llm.txt & llm-full.txt)</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label for="filterDateRange" class="filter-label">Date Range</label>
-                    <select id="filterDateRange" class="filter-select">
-                        <option value="all">All Time</option>
-                        <option value="today">Today</option>
-                        <option value="7days">Last 7 Days</option>
-                        <option value="30days">Last 30 Days</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label for="filterSource" class="filter-label">Source</label>
-                    <select id="filterSource" class="filter-select">
-                        <option value="all">All Sources</option>
-                        <option value="auto">Auto</option>
-                        <option value="manual">Manual</option>
-                    </select>
-                </div>
-            </div>
-            <div id="historyList" class="history-list">
-                <!-- History items will be loaded here -->
-            </div>
-            <!-- Pagination Controls -->
-            <div id="historyPagination" class="history-pagination" style="display: none;">
-                <button id="historyPrevBtn" class="btn-pagination prev" disabled>Previous</button>
-                <div class="pagination-info">
-                    <span id="paginationText">Page 1 of 1</span>
-                </div>
-                <button id="historyNextBtn" class="btn-pagination next">Next</button>
-            </div>
-        </section>
+
         
         <!-- Thank You Message Section -->
         <section class="generator-card" id="thankYouSection" style="display: none;">
