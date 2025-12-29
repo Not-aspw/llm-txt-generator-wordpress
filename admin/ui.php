@@ -483,16 +483,35 @@
                         <div class="backup-info">
                             <p class="backup-title">If you continue:</p>
                             <ul class="backup-details">
-                                <li>Your old file(s) will be stored as backup file(s) with timestamp</li>
-                                <li>The new content will replace the existing file(s)</li>
+                                <li>The file(s) above will be updated with your new content</li>
+                                <li>Search engines will start using the new version</li>
                             </ul>
-                            <p class="backup-example" id="backupExample"></p>
                         </div>
+                        <p class="output-change-warning" id="outputChangeWarning" style="display:none;"></p>
                     </div>
                     <div class="button-container confirm-buttons">
                         <button type="button" class="btn-cancel" id="confirmCancelBtn">Cancel</button>
                         <button type="button" class="submit-btn" id="confirmProceedBtn">Proceed</button>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generic Action Confirmation Modal (for schedule + automation actions) -->
+    <div role="dialog" aria-modal="true" class="fade custom-modal modal" id="actionConfirmModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="actionConfirmTitle">Are you sure?</h4>
+                    <button type="button" class="btn-close" aria-label="Close" id="actionConfirmCloseBtn">×</button>
+                </div>
+                <div class="modal-body">
+                    <p class="confirm-text" id="actionConfirmMessage"></p>
+                </div>
+                <div class="modal-footer button-container confirm-buttons">
+                    <button type="button" class="btn-cancel" id="actionConfirmCancelBtn">Cancel</button>
+                    <button type="button" class="submit-btn" id="actionConfirmProceedBtn">Confirm</button>
                 </div>
             </div>
         </div>

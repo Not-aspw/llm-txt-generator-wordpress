@@ -95,6 +95,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteProceedBtn = document.getElementById('deleteProceedBtn');
     const deleteCancelBtn = document.getElementById('deleteCancelBtn');
     const deleteModalCloseBtn = document.getElementById('deleteModalCloseBtn');
+    const actionConfirmModal = document.getElementById('actionConfirmModal');
+    const actionConfirmTitle = document.getElementById('actionConfirmTitle');
+    const actionConfirmMessage = document.getElementById('actionConfirmMessage');
+    const actionConfirmProceedBtn = document.getElementById('actionConfirmProceedBtn');
+    const actionConfirmCancelBtn = document.getElementById('actionConfirmCancelBtn');
+    const actionConfirmCloseBtn = document.getElementById('actionConfirmCloseBtn');
     
     // Email and OTP verification modals
     const userDetailsModal = document.getElementById('userDetailsModal');
@@ -145,12 +151,33 @@ document.addEventListener('DOMContentLoaded', () => {
     let isSubmittingOtp = false; // Prevent duplicate OTP submissions
     let isResendingOtp = false; // Prevent duplicate resend OTP submissions
     let isSendingOtp = false; // Prevent duplicate OTP sending (Get OTP button)
+    let pendingActionConfirm = null; // Shared confirm handler for schedule/automation actions
 
     let selectedOutputType = 'llms_both';
     let currentOutputContent = '';
     let currentSummarizedContent = '';
     let currentFullContent = '';
     let storedZipBlob = null;
+
+    // Generic action confirmation modal helper
+    function openActionConfirm(options) {
+        const { title, message, confirmLabel = 'Confirm', onConfirm } = options || {};
+
+        if (!actionConfirmModal || !actionConfirmTitle || !actionConfirmMessage || !actionConfirmProceedBtn) {
+            // Fallback: run action immediately if modal is not available
+            if (typeof onConfirm === 'function') {
+                onConfirm();
+            }
+            return;
+        }
+
+        pendingActionConfirm = typeof onConfirm === 'function' ? onConfirm : null;
+        actionConfirmTitle.textContent = title || 'Are you sure?';
+        actionConfirmMessage.textContent = message || '';
+        actionConfirmProceedBtn.textContent = confirmLabel;
+
+        actionConfirmModal.classList.add('show');
+    }
 
     /* ========================
        Email Verification Functions
@@ -1662,9 +1689,20 @@ document.addEventListener('DOMContentLoaded', () => {
        Reason: Client feedback - simplify UI, focus on Save to Website Root functionality
     ========================*/
 
-    /* ------------------------
-       Function to proceed with save
-    -------------------------*/
+     // Track current automation output type and active state for confirmations
+     let currentAutomationOutputTypeRaw = null;
+     let currentAutomationActive = false;
+
+     function getOutputTypeLabel(raw) {
+          if (raw === 'llms_txt') return 'LLM.txt only';
+          if (raw === 'llms_full_txt') return 'LLM-Full.txt only';
+          if (raw === 'llms_both') return 'Both LLM.txt & LLM-Full.txt';
+          return 'this format';
+     }
+
+     /* ------------------------
+         Function to proceed with save
+     -------------------------*/
     async function proceedWithSave(filesExist, userConfirmed) {
         console.log('[KMWP DEBUG] proceedWithSave called - filesExist:', filesExist, 'userConfirmed:', userConfirmed);
         
@@ -1810,7 +1848,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     // Show custom confirmation modal
                     const fileListItems = document.getElementById('confirmFileListItems');
-                    const backupExample = document.getElementById('backupExample');
+                    const outputChangeEl = document.getElementById('outputChangeWarning');
                     
                     // Clear previous items
                     fileListItems.innerHTML = '';
@@ -1822,10 +1860,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         fileListItems.appendChild(li);
                     });
                     
-                    // Set backup example
-                    const exampleFile = checkResult.data.existing_files[0];
-                    const timestamp = new Date().toISOString().replace(/[-:]/g, '-').split('.')[0].replace('T', '-');
-                    backupExample.textContent = `Example: ${exampleFile}.backup.${timestamp}`;
+                    // Show output-type change warning only if automation is active
+                    // and the selected output type differs from the automation type
+                    if (outputChangeEl && currentAutomationActive && currentAutomationOutputTypeRaw && selectedOutputType && selectedOutputType !== currentAutomationOutputTypeRaw) {
+                        const currentLabel = getOutputTypeLabel(currentAutomationOutputTypeRaw);
+                        const newLabel = getOutputTypeLabel(selectedOutputType);
+                        outputChangeEl.textContent =
+                            `You're currently creating ${currentLabel}. Saving will create ${newLabel} instead. Continue?`;
+                        outputChangeEl.style.display = 'block';
+                    } else if (outputChangeEl) {
+                        outputChangeEl.style.display = 'none';
+                    }
                     
                     // Show modal
                     if (confirmOverwriteModal) {
@@ -1918,8 +1963,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Setup tabs in output modal
     function setupOutputTabs() {
         const modalTabs = document.getElementById('modalTabs');
-        const tabButtons = document.querySelectorAll('.tab-btn');
-        const tabContents = document.querySelectorAll('.tab-content');
+        if (!modalTabs) return;
+
+        // Scope tab buttons and contents to the output preview modal only
+        const tabButtons = modalTabs.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('#outputPreviewModal .tab-content');
         const outputIframeFullTxt = document.getElementById('outputIframeFullTxt');
         
         // Show tabs only if both contents are available
@@ -1972,23 +2020,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 const newBtn = btn.cloneNode(true);
                 btn.parentNode.replaceChild(newBtn, btn);
             });
-            
-            // Re-attach event listeners to new buttons
-            document.querySelectorAll('.tab-btn').forEach(btn => {
+
+            // Re-attach event listeners to new buttons (only inside this modal)
+            const modalTabButtons = modalTabs.querySelectorAll('.tab-btn');
+
+            modalTabButtons.forEach(btn => {
                 btn.addEventListener('click', function(e) {
                     e.preventDefault();
                     const tabId = this.getAttribute('data-tab');
-                    
-                    // Update active tab button
-                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+
+                    // Update active tab button (modal only)
+                    modalTabButtons.forEach(b => b.classList.remove('active'));
                     this.classList.add('active');
-                    
-                    // Update visible content
-                    document.querySelectorAll('.tab-content').forEach(content => {
+
+                    // Update visible content (modal only)
+                    document.querySelectorAll('#outputPreviewModal .tab-content').forEach(content => {
                         content.classList.remove('active');
                         content.style.display = 'none';
                     });
-                    
+
                     const tabContent = document.getElementById('tab-content-' + tabId);
                     if (tabContent) {
                         tabContent.classList.add('active');
@@ -2001,12 +2051,30 @@ document.addEventListener('DOMContentLoaded', () => {
             if (modalTabs) {
                 modalTabs.style.display = 'none';
             }
-            // Ensure content is visible
-            tabContents.forEach(content => {
-                content.style.display = 'block';
-                content.classList.add('active');
+
+            const llmsTxtContent  = document.getElementById('tab-content-llms_txt');
+            const llmsFullContent = document.getElementById('tab-content-llms_full_txt');
+
+            // Hide both sections by default
+            [llmsTxtContent, llmsFullContent].forEach(section => {
+                if (!section) return;
+                section.style.display = 'none';
+                section.classList.remove('active');
             });
-            
+
+            // Decide which single section to show
+            let sectionToShow = null;
+            if (selectedOutputType === 'llms_txt') {
+                sectionToShow = llmsTxtContent;
+            } else if (selectedOutputType === 'llms_full_txt') {
+                sectionToShow = llmsFullContent || llmsTxtContent; // fallback
+            }
+
+            if (sectionToShow) {
+                sectionToShow.style.display = 'block';
+                sectionToShow.classList.add('active');
+            }
+
             // For single file types, populate the correct iframe
             if (selectedOutputType === 'llms_txt' && currentSummarizedContent) {
                 // Populate first iframe with summarized content
@@ -2019,9 +2087,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     iframeDoc.close();
                 }
             } else if (selectedOutputType === 'llms_full_txt' && currentFullContent) {
-                // Populate first iframe with full content
-                if (outputIframe) {
-                    const iframeDoc = outputIframe.contentDocument || outputIframe.contentWindow.document;
+                // Prefer dedicated full-txt iframe if present, otherwise use main iframe
+                const targetIframe = outputIframeFullTxt || outputIframe;
+                if (targetIframe) {
+                    const iframeDoc = targetIframe.contentDocument || targetIframe.contentWindow.document;
                     iframeDoc.open();
                     iframeDoc.write('<html><body style="white-space:pre-wrap;font-family:monospace">' + 
                         currentFullContent.trim().replace(/</g, '&lt;') + 
@@ -2511,6 +2580,43 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // Generic action confirmation modal handlers
+    if (actionConfirmProceedBtn) {
+        actionConfirmProceedBtn.addEventListener('click', () => {
+            if (typeof pendingActionConfirm === 'function') {
+                const fn = pendingActionConfirm;
+                pendingActionConfirm = null;
+                fn();
+            }
+            if (actionConfirmModal) {
+                actionConfirmModal.classList.remove('show');
+            }
+        });
+    }
+
+    function closeActionConfirmModal() {
+        pendingActionConfirm = null;
+        if (actionConfirmModal) {
+            actionConfirmModal.classList.remove('show');
+        }
+    }
+
+    if (actionConfirmCancelBtn) {
+        actionConfirmCancelBtn.addEventListener('click', closeActionConfirmModal);
+    }
+
+    if (actionConfirmCloseBtn) {
+        actionConfirmCloseBtn.addEventListener('click', closeActionConfirmModal);
+    }
+
+    if (actionConfirmModal) {
+        actionConfirmModal.addEventListener('click', (e) => {
+            if (e.target === actionConfirmModal) {
+                closeActionConfirmModal();
+            }
+        });
+    }
     
     // Setup history tabs (similar to output preview tabs)
     function setupHistoryTabsHandler() {
@@ -2625,10 +2731,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Run initial history check - no longer needed with tabs
     
     
-    /* ========================
-       SCHEDULE SETTINGS FUNCTIONS
-    ========================*/
+     /* ========================
+         SCHEDULE SETTINGS FUNCTIONS
+     ========================*/
     
+     // Track last-loaded schedule state to detect meaningful changes
+     let currentScheduleState = null;
+
     async function openScheduleModal() {
         if (scheduleSettingsModal) {
             scheduleSettingsModal.classList.add('show');
@@ -2645,6 +2754,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const data = await response.json();
                     if (data.success && data.data && data.data.schedule) {
                         const schedule = data.data.schedule;
+                        currentScheduleState = schedule; // remember last loaded
                         
                         // Populate form fields
                         enableScheduleCheckbox.checked = schedule.enabled || false;
@@ -3108,26 +3218,47 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // every_minute doesn't need day/week/month selection
-            
-            // Disable only the save button during save operation
-            const originalSaveBtnText = saveScheduleBtn.textContent;
-            saveScheduleBtn.disabled = true;
-            saveScheduleBtn.textContent = 'Saving...';
-            
-            // Save to database via AJAX
-            try {
-                const response = await apiFetch('kmwp_save_schedule', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        schedule_enabled: scheduleEnabled,
-                        schedule_frequency: frequency,
-                        schedule_day_of_week: dayOfWeek,
-                        schedule_day_of_month: dayOfMonth
-                    })
-                });
+
+            // Build new schedule object for comparison
+            const newSchedule = {
+                enabled: scheduleEnabled,
+                frequency: frequency,
+                day_of_week: dayOfWeek ? parseInt(dayOfWeek) : 0,
+                day_of_month: dayOfMonth ? parseInt(dayOfMonth) : 0
+            };
+
+            // If there is an active schedule already and something changes, confirm with user
+            let confirmNeeded = false;
+            if (currentScheduleState && currentScheduleState.enabled) {
+                if (
+                    newSchedule.enabled !== currentScheduleState.enabled ||
+                    newSchedule.frequency !== currentScheduleState.frequency ||
+                    (newSchedule.frequency === 'weekly' && String(newSchedule.day_of_week) !== String(currentScheduleState.day_of_week)) ||
+                    (newSchedule.frequency === 'monthly' && String(newSchedule.day_of_month) !== String(currentScheduleState.day_of_month))
+                ) {
+                    confirmNeeded = true;
+                }
+            }
+
+            const performSave = async () => {
+                // Disable only the save button during save operation
+                const originalSaveBtnText = saveScheduleBtn.textContent;
+                saveScheduleBtn.disabled = true;
+                saveScheduleBtn.textContent = 'Saving...';
+
+                try {
+                    const response = await apiFetch('kmwp_save_schedule', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            schedule_enabled: scheduleEnabled,
+                            schedule_frequency: frequency,
+                            schedule_day_of_week: dayOfWeek,
+                            schedule_day_of_month: dayOfMonth
+                        })
+                    });
                 
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
@@ -3158,7 +3289,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Re-enable save button before closing
                     saveScheduleBtn.disabled = false;
                     saveScheduleBtn.textContent = originalSaveBtnText;
-                    
+
                     // Reload schedule status on main page and update output type info immediately
                     await loadScheduleStatus();
                     // Update output type info message immediately with new schedule settings
@@ -3183,6 +3314,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Re-enable save button on error
                 saveScheduleBtn.disabled = false;
                 saveScheduleBtn.textContent = originalSaveBtnText;
+            }
+        };
+
+            if (confirmNeeded) {
+                openActionConfirm({
+                    title: 'Update schedule?',
+                    message: 'Your auto-update schedule is already active. Saving will change the current schedule. Continue?',
+                    confirmLabel: 'Update schedule',
+                    onConfirm: performSave
+                });
+            } else {
+                performSave();
             }
         });
     }
@@ -3415,9 +3558,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 last_run_duration = 0,
                 schedule_frequency = '—',
                 output_type = '—',
+                output_type_raw = null,
                 website_url = '—',
+                automation_active = false,
                 recent_runs = []
             } = statusData;
+
+            // Expose automation state for other UI logic (e.g. confirmations)
+            currentAutomationOutputTypeRaw = output_type_raw;
+            currentAutomationActive = !!automation_active;
 
             // Update status indicator
             const statusDot = document.getElementById('cronStatusDot');
@@ -3445,6 +3594,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const frequencyEl = document.getElementById('cronFrequency');
             const outputTypeEl = document.getElementById('cronOutputType');
             const websiteUrlEl = document.getElementById('cronWebsiteUrl');
+            const deleteBtn = document.getElementById('deleteCronBtn');
             if (lastRunEl) lastRunEl.textContent = last_run ? this.formatTime(last_run) : 'Never';
 
             // When cron is paused, show a clear paused state instead of a time
@@ -3459,6 +3609,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (frequencyEl) frequencyEl.textContent = schedule_frequency;
             if (outputTypeEl) outputTypeEl.textContent = output_type;
             if (websiteUrlEl) websiteUrlEl.textContent = website_url;
+
+            // Show delete button only when there is an active or configured automation
+            const hasAutomation = !!automation_active || status === 'scheduled' || status === 'paused' || !!next_run;
+            if (deleteBtn) {
+                deleteBtn.style.display = hasAutomation ? 'inline-flex' : 'none';
+            }
 
             // Update recent runs
             this.updateRecentRuns(recent_runs);
@@ -3502,17 +3658,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         pauseCron() {
-            if (!confirm('Pause automation? You can resume it anytime.')) return;
-            this.sendAction(this.pauseEndpoint, 'Automation paused');
+            openActionConfirm({
+                title: 'Pause automatic updates?',
+                message: 'Pause automatic updates for this website? You can start them again anytime.',
+                confirmLabel: 'Pause updates',
+                onConfirm: () => {
+                    this.sendAction(this.pauseEndpoint, 'Automatic updates paused');
+                }
+            });
         }
 
         resumeCron() {
-            this.sendAction(this.resumeEndpoint, 'Automation resumed');
+            openActionConfirm({
+                title: 'Start automatic updates?',
+                message: 'Start automatic updates again for this website?',
+                confirmLabel: 'Start updates',
+                onConfirm: () => {
+                    this.sendAction(this.resumeEndpoint, 'Automatic updates started');
+                }
+            });
         }
 
         deleteCron() {
-            if (!confirm('Delete automation? This cannot be undone. You\'ll need to reconfigure from scratch.')) return;
-            this.sendAction(this.deleteEndpoint, 'Automation deleted', true);
+            openActionConfirm({
+                title: 'Delete automation?',
+                message: 'Delete this automation? It will be removed completely and you\'ll need to set it up again from the beginning.',
+                confirmLabel: 'Delete automation',
+                onConfirm: () => {
+                    this.sendAction(this.deleteEndpoint, 'Automation deleted', true);
+                }
+            });
         }
 
         sendAction(action, successMsg, reload = false) {

@@ -2181,21 +2181,19 @@ add_action('wp_ajax_kmwp_resume_cron', function() {
  */
 add_action('wp_ajax_kmwp_delete_cron', function() {
     kmwp_verify_ajax();
-    
+
     $user_id = get_current_user_id();
-    
-    // Clear the scheduled hook
+
+    // Clear the scheduled hook so no future runs occur
     wp_clear_scheduled_hook('kmwp_auto_generate_cron', array($user_id));
-    
-    // Delete all cron-related options
-    delete_option('kmwp_schedule_' . $user_id);
-    delete_option('kmwp_last_generation_' . $user_id);
+
+    // Keep schedule and last generation settings so the user can re-enable
+    // Only clear transient runtime flags
     delete_option('kmwp_cron_status_' . $user_id);
     delete_option('kmwp_cron_paused_' . $user_id);
-    delete_option('kmwp_last_cron_run_' . $user_id);
-    
-    kmwp_log('Cron deleted by user', 'info', ['user_id' => $user_id]);
-    wp_send_json_success(['message' => 'Cron deleted']);
+
+    kmwp_log('Cron unscheduled by user (settings preserved)', 'info', ['user_id' => $user_id]);
+    wp_send_json_success(['message' => 'Automation stopped. Your schedule settings are still saved.']);
 });
 
 /* ========================
@@ -2267,7 +2265,10 @@ function kmwp_get_cron_status($user_id) {
     
     // Get recent runs (last 5)
     $recent_runs = kmwp_get_recent_cron_runs($user_id, 5);
-    
+
+    // Determine whether automation is active (scheduled or paused)
+    $automation_active = in_array($status, array('scheduled', 'paused'), true);
+
     return array(
         'status' => $status,
         'is_paused' => (bool)$is_paused,
@@ -2277,7 +2278,9 @@ function kmwp_get_cron_status($user_id) {
         'last_run_duration' => isset($last_run['duration']) ? intval($last_run['duration']) : 0,
         'schedule_frequency' => $frequency,
         'output_type' => $output_type,
+        'output_type_raw' => $raw_output_type,
         'website_url' => $website_url,
+        'automation_active' => $automation_active,
         'recent_runs' => $recent_runs
     );
 }
