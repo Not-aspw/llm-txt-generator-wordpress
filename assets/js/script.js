@@ -3445,9 +3445,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const frequencyEl = document.getElementById('cronFrequency');
             const outputTypeEl = document.getElementById('cronOutputType');
             const websiteUrlEl = document.getElementById('cronWebsiteUrl');
-
             if (lastRunEl) lastRunEl.textContent = last_run ? this.formatTime(last_run) : 'Never';
-            if (nextRunEl) nextRunEl.textContent = next_run ? this.formatDateTime(next_run) : 'Not scheduled';
+
+            // When cron is paused, show a clear paused state instead of a time
+            if (nextRunEl) {
+                if (status === 'paused' || is_paused) {
+                    nextRunEl.textContent = 'Paused';
+                } else {
+                    nextRunEl.textContent = next_run ? this.formatDateTime(next_run) : 'Not scheduled';
+                }
+            }
             if (durationEl) durationEl.textContent = last_run_duration ? `${last_run_duration}s` : '—';
             if (frequencyEl) frequencyEl.textContent = schedule_frequency;
             if (outputTypeEl) outputTypeEl.textContent = output_type;

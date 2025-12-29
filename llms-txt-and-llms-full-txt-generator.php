@@ -879,13 +879,11 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
             $response_data['website_url'] = $website_url ?: 'Unknown';
         }
         
-        // Store URL and output type for cron to use
+        // Store URL and output type for cron to use (actual values)
         $user_id = get_current_user_id();
         $last_generation_key = 'kmwp_last_generation_' . $user_id;
-        // For testing: Always use static URL
-        $static_url = 'https://www.yogreet.com';
         update_option($last_generation_key, array(
-            'website_url' => $static_url,
+            'website_url' => $website_url ?: '',
             'output_type' => 'llms_both',
             'updated_at' => current_time('mysql')
         ));
@@ -983,13 +981,11 @@ add_action('wp_ajax_kmwp_save_to_root', function () {
         $response_data['website_url'] = $website_url ?: 'Unknown';
     }
     
-    // Store URL and output type for cron to use
+    // Store URL and output type for cron to use (actual values)
     $user_id = get_current_user_id();
     $last_generation_key = 'kmwp_last_generation_' . $user_id;
-    // For testing: Always use static URL
-    $static_url = 'https://www.yogreet.com';
     update_option($last_generation_key, array(
-        'website_url' => $static_url,
+        'website_url' => $website_url ?: '',
         'output_type' => $output_type,
         'updated_at' => current_time('mysql')
     ));
@@ -2215,6 +2211,7 @@ add_action('wp_ajax_kmwp_delete_cron', function() {
 function kmwp_get_cron_status($user_id) {
     $next_timestamp = wp_next_scheduled('kmwp_auto_generate_cron', array($user_id));
     $schedule_option = get_option('kmwp_schedule_' . $user_id);
+    $last_generation = get_option('kmwp_last_generation_' . $user_id, array());
     $is_paused = get_option('kmwp_cron_paused_' . $user_id, false);
     $last_run = get_option('kmwp_last_cron_run_' . $user_id, array());
     
@@ -2246,13 +2243,26 @@ function kmwp_get_cron_status($user_id) {
         'llms_both' => 'Both (LLM.txt & LLM-Full.txt)'
     );
     
-    $output_type = isset($schedule_option['output_type']) 
-        ? $output_type_map[$schedule_option['output_type']] ?? $schedule_option['output_type']
+    // Decide raw output type and website URL, preferring last generation data
+    $raw_output_type = null;
+    $raw_website_url = '';
+
+    if (!empty($last_generation) && !empty($last_generation['website_url'])) {
+        $raw_output_type = isset($last_generation['output_type']) ? $last_generation['output_type'] : null;
+        $raw_website_url = $last_generation['website_url'];
+    } elseif (!empty($schedule_option)) {
+        $raw_output_type = isset($schedule_option['output_type']) ? $schedule_option['output_type'] : null;
+        $raw_website_url = isset($schedule_option['website_url']) ? $schedule_option['website_url'] : '';
+    }
+
+    // Map output type to human readable label
+    $output_type = $raw_output_type
+        ? ($output_type_map[$raw_output_type] ?? $raw_output_type)
         : '—';
-    
-    // Get website URL
-    $website_url = isset($schedule_option['website_url']) 
-        ? esc_url($schedule_option['website_url'])
+
+    // Sanitize website URL for display
+    $website_url = $raw_website_url !== ''
+        ? esc_url($raw_website_url)
         : '—';
     
     // Get recent runs (last 5)
